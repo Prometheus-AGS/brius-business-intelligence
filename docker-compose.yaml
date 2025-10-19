@@ -1,0 +1,75 @@
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: mastra-postgres
+    environment:
+      POSTGRES_DB: mastra
+      POSTGRES_USER: mastra
+      POSTGRES_PASSWORD: mastra_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mastra -d mastra"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mastra-network
+
+
+  # Mastra playground application
+  mastra:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mastra-playground
+    depends_on:
+      postgres:
+        condition: service_healthy
+      langfuse-web:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    environment:
+      # Database configuration
+      DATABASE_URL: postgresql://mastra:mastra_password@postgres:5432/mastra
+      
+      # AWS Bedrock configuration
+      AWS_REGION: us-east-2
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      
+      # AI Gateway configuration
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY}
+      
+      # Langfuse configuration (UPDATED for v3)
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-default}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-default}
+      LANGFUSE_BASEURL: http://langfuse-web:3000
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      
+      # Mastra configuration
+      NODE_ENV: development
+      MASTRA_LOG_LEVEL: info
+      
+      # Model configuration (using AI Gateway with Bedrock)
+      BEDROCK_MODEL_ID: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+      BEDROCK_EMBEDDING_MODEL_ID: bedrock/amazon.titan-embed-text-v2:0
+    volumes:
+      - .:/app
+      - /app/node_modules
+    networks:
+      - mastra-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  mastra-network:
+    driver: bridge

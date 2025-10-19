@@ -1,0 +1,568 @@
+openapi: 3.0.3
+info:
+  title: Mastra BI - Memory Management API
+  description: REST API for user and global memory operations with semantic search
+  version: 1.0.0
+  contact:
+    name: Mastra BI System
+    url: https://github.com/mastra-ai/mastra
+
+servers:
+  - url: http://localhost:3000
+    description: Development server
+  - url: https://api.brius.com
+    description: Production server
+
+paths:
+  /api/memory/user:
+    post:
+      summary: Store user memory
+      description: Store personal memory for authenticated user
+      operationId: storeUserMemory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreMemoryRequest'
+      responses:
+        '201':
+          description: Memory stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      summary: Search user memory
+      description: Search personal memories for authenticated user
+      operationId: searchUserMemory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query text
+        - name: top_k
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+          description: Number of results to return
+        - name: similarity_threshold
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+            default: 0.6
+        - name: category
+          in: query
+          schema:
+            type: string
+          description: Filter by category in metadata
+      responses:
+        '200':
+          description: Memory search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemorySearchResponse'
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/memory/user/{id}:
+    get:
+      summary: Get user memory by ID
+      description: Retrieve specific user memory item
+      operationId: getUserMemory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Memory item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryItem'
+        '404':
+          description: Memory not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      summary: Update user memory
+      description: Update specific user memory item
+      operationId: updateUserMemory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMemoryRequest'
+      responses:
+        '200':
+          description: Memory updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryResponse'
+        '404':
+          description: Memory not found
+
+    delete:
+      summary: Delete user memory
+      description: Delete specific user memory item
+      operationId: deleteUserMemory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Memory deleted successfully
+        '404':
+          description: Memory not found
+
+  /api/memory/global:
+    post:
+      summary: Store global memory
+      description: Store shared organizational memory (admin only)
+      operationId: storeGlobalMemory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreGlobalMemoryRequest'
+      responses:
+        '201':
+          description: Global memory stored successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryResponse'
+        '400':
+          description: Bad request
+        '403':
+          description: Admin access required
+
+    get:
+      summary: Search global memory
+      description: Search shared organizational memories
+      operationId: searchGlobalMemory
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query text
+        - name: top_k
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 5
+        - name: category
+          in: query
+          schema:
+            type: string
+          description: Filter by category
+        - name: similarity_threshold
+          in: query
+          schema:
+            type: number
+            minimum: 0
+            maximum: 1
+            default: 0.6
+      responses:
+        '200':
+          description: Global memory search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemorySearchResponse'
+
+  /api/memory/global/{id}:
+    get:
+      summary: Get global memory by ID
+      description: Retrieve specific global memory item
+      operationId: getGlobalMemory
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Global memory item
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalMemoryItem'
+
+    put:
+      summary: Update global memory
+      description: Update specific global memory item (admin only)
+      operationId: updateGlobalMemory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGlobalMemoryRequest'
+      responses:
+        '200':
+          description: Global memory updated successfully
+        '403':
+          description: Admin access required
+
+    delete:
+      summary: Delete global memory
+      description: Delete specific global memory item (admin only)
+      operationId: deleteGlobalMemory
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Global memory deleted successfully
+        '403':
+          description: Admin access required
+
+  /api/memory/stats:
+    get:
+      summary: Get memory statistics
+      description: Retrieve memory usage and performance statistics
+      operationId: getMemoryStats
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Memory statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryStatsResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase JWT token for user authentication
+
+  schemas:
+    StoreMemoryRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          minLength: 1
+          description: Memory content text
+        metadata:
+          type: object
+          description: Optional metadata (category, importance, etc.)
+          properties:
+            category:
+              type: string
+            importance:
+              type: string
+              enum: [low, medium, high]
+            tags:
+              type: array
+              items:
+                type: string
+            expires_at:
+              type: string
+              format: date-time
+
+    StoreGlobalMemoryRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          minLength: 1
+          description: Global memory content text
+        category:
+          type: string
+          description: Memory category (policy, procedure, knowledge)
+        metadata:
+          type: object
+          description: Optional metadata
+          properties:
+            importance:
+              type: string
+              enum: [low, medium, high]
+            source:
+              type: string
+            expires_at:
+              type: string
+              format: date-time
+            tags:
+              type: array
+              items:
+                type: string
+
+    UpdateMemoryRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          minLength: 1
+        metadata:
+          type: object
+
+    UpdateGlobalMemoryRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          minLength: 1
+        category:
+          type: string
+        metadata:
+          type: object
+
+    MemoryResponse:
+      type: object
+      required:
+        - id
+        - content
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        message:
+          type: string
+
+    MemoryItem:
+      type: object
+      required:
+        - id
+        - user_id
+        - content
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        content:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    GlobalMemoryItem:
+      type: object
+      required:
+        - id
+        - content
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        category:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MemorySearchResponse:
+      type: object
+      required:
+        - results
+        - query
+        - total_results
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemorySearchResult'
+        query:
+          type: string
+        total_results:
+          type: integer
+        search_time_ms:
+          type: integer
+
+    MemorySearchResult:
+      type: object
+      required:
+        - id
+        - content
+        - similarity_score
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        similarity_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        metadata:
+          type: object
+        category:
+          type: string
+          description: Present for global memory
+        created_at:
+          type: string
+          format: date-time
+
+    MemoryStatsResponse:
+      type: object
+      required:
+        - user_memories_count
+        - global_memories_count
+      properties:
+        user_memories_count:
+          type: integer
+          description: Total user memories for authenticated user
+        global_memories_count:
+          type: integer
+          description: Total global memories
+        user_memory_size_mb:
+          type: number
+          description: Storage size for user memories
+        global_memory_size_mb:
+          type: number
+          description: Storage size for global memories
+        avg_search_time_ms:
+          type: number
+        total_searches_24h:
+          type: integer
+        memory_categories:
+          type: object
+          description: Count by category for global memories
+          additionalProperties:
+            type: integer
+        cache_hit_rate:
+          type: number
+          description: Memory retrieval cache hit rate
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+            code:
+              type: string
+            details:
+              type: object

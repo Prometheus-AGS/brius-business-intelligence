@@ -1,0 +1,388 @@
+openapi: 3.0.3
+info:
+  title: Mastra BI - MCP Server API
+  description: Model Context Protocol server exposing agents, workflows, knowledge, and memory tools
+  version: 1.0.0
+  contact:
+    name: Mastra BI System
+    url: https://github.com/mastra-ai/mastra
+
+servers:
+  - url: http://localhost:3001
+    description: MCP server (HTTP SSE transport)
+
+paths:
+  /mcp/v1/initialize:
+    post:
+      summary: Initialize MCP session
+      description: Initialize MCP connection and negotiate capabilities
+      operationId: mcpInitialize
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - protocolVersion
+                - capabilities
+                - clientInfo
+              properties:
+                protocolVersion:
+                  type: string
+                  enum: ["2024-11-05"]
+                capabilities:
+                  type: object
+                  properties:
+                    roots:
+                      type: object
+                      properties:
+                        listChanged:
+                          type: boolean
+                    sampling:
+                      type: object
+                clientInfo:
+                  type: object
+                  required:
+                    - name
+                    - version
+                  properties:
+                    name:
+                      type: string
+                    version:
+                      type: string
+      responses:
+        '200':
+          description: Initialization successful
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - protocolVersion
+                  - capabilities
+                  - serverInfo
+                properties:
+                  protocolVersion:
+                    type: string
+                  capabilities:
+                    type: object
+                    properties:
+                      logging:
+                        type: object
+                      tools:
+                        type: object
+                        properties:
+                          listChanged:
+                            type: boolean
+                      prompts:
+                        type: object
+                        properties:
+                          listChanged:
+                            type: boolean
+                  serverInfo:
+                    type: object
+                    required:
+                      - name
+                      - version
+                    properties:
+                      name:
+                        type: string
+                        enum: ["mastra-bi-system"]
+                      version:
+                        type: string
+
+  /mcp/v1/tools/list:
+    post:
+      summary: List available tools
+      description: List all available MCP tools from agents, workflows, knowledge, and memory systems
+      operationId: mcpListTools
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - method
+              properties:
+                method:
+                  type: string
+                  enum: ["tools/list"]
+                params:
+                  type: object
+      responses:
+        '200':
+          description: List of available tools
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - tools
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MCPTool'
+
+  /mcp/v1/tools/call:
+    post:
+      summary: Call MCP tool
+      description: Execute a specific MCP tool with provided arguments
+      operationId: mcpCallTool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - method
+                - params
+              properties:
+                method:
+                  type: string
+                  enum: ["tools/call"]
+                params:
+                  type: object
+                  required:
+                    - name
+                    - arguments
+                  properties:
+                    name:
+                      type: string
+                      description: Tool name (e.g., "agent:business-intelligence", "workflow:orchestrator")
+                    arguments:
+                      type: object
+                      description: Tool-specific arguments
+      responses:
+        '200':
+          description: Tool execution result
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-sent events with tool execution progress and results
+            application/json:
+              schema:
+                type: object
+                required:
+                  - content
+                properties:
+                  content:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - type
+                        - text
+                      properties:
+                        type:
+                          type: string
+                          enum: ["text"]
+                        text:
+                          type: string
+                  isError:
+                    type: boolean
+
+  /mcp/v1/prompts/list:
+    post:
+      summary: List available prompts
+      description: List predefined prompts and templates
+      operationId: mcpListPrompts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - method
+              properties:
+                method:
+                  type: string
+                  enum: ["prompts/list"]
+      responses:
+        '200':
+          description: List of available prompts
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - prompts
+                properties:
+                  prompts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MCPPrompt'
+
+  /mcp/v1/logging:
+    post:
+      summary: Send log message
+      description: Receive log messages from MCP client
+      operationId: mcpLogging
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - method
+                - params
+              properties:
+                method:
+                  type: string
+                  enum: ["logging/setLevel"]
+                params:
+                  type: object
+                  required:
+                    - level
+                  properties:
+                    level:
+                      type: string
+                      enum: ["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]
+      responses:
+        '200':
+          description: Log level set successfully
+          content:
+            application/json:
+              schema:
+                type: object
+
+components:
+  schemas:
+    MCPTool:
+      type: object
+      required:
+        - name
+        - description
+        - inputSchema
+      properties:
+        name:
+          type: string
+          description: Unique tool identifier
+          examples:
+            - "agent:business-intelligence"
+            - "agent:default"
+            - "workflow:orchestrator"
+            - "workflow:planning"
+            - "knowledge:search"
+            - "knowledge:upload"
+            - "memory:user-search"
+            - "memory:global-search"
+            - "memory:user-store"
+            - "memory:global-store"
+        description:
+          type: string
+          description: Tool functionality description
+        inputSchema:
+          type: object
+          description: JSON Schema for tool input parameters
+          properties:
+            type:
+              type: string
+              enum: ["object"]
+            properties:
+              type: object
+            required:
+              type: array
+              items:
+                type: string
+        category:
+          type: string
+          enum: ["agent", "workflow", "knowledge", "memory"]
+        metadata:
+          type: object
+          description: Additional tool metadata
+
+    MCPPrompt:
+      type: object
+      required:
+        - name
+        - description
+      properties:
+        name:
+          type: string
+          description: Prompt identifier
+        description:
+          type: string
+          description: Prompt purpose and usage
+        arguments:
+          type: array
+          items:
+            type: object
+            required:
+              - name
+              - description
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+              required:
+                type: boolean
+
+# MCP Tool Examples and Schemas
+
+# Agent Tools
+# - agent:business-intelligence
+#   Input: { message: string, user_id?: string, conversation_id?: string }
+#   Output: Streamed agent response with tool calls and final answer
+
+# - agent:default
+#   Input: { message: string, user_id?: string, conversation_id?: string }
+#   Output: Direct agent response for simple queries
+
+# Workflow Tools
+# - workflow:orchestrator
+#   Input: { prompt: string, user_id?: string, conversation_id?: string }
+#   Output: Intent classification result and routed agent response
+
+# - workflow:planning
+#   Input: { query: string, user_id?: string }
+#   Output: Knowledge-first planning workflow with execution results
+
+# Knowledge Tools
+# - knowledge:search
+#   Input: { query: string, top_k?: number, filters?: object }
+#   Output: Semantic search results from knowledge base
+
+# - knowledge:upload
+#   Input: { content: string, filename: string, metadata?: object }
+#   Output: Document processing status and ID
+
+# - knowledge:list
+#   Input: { category?: string, limit?: number, offset?: number }
+#   Output: List of documents with metadata
+
+# - knowledge:delete
+#   Input: { document_id: string }
+#   Output: Deletion confirmation
+
+# Memory Tools
+# - memory:user-search
+#   Input: { query: string, user_id: string, top_k?: number }
+#   Output: User memory search results
+
+# - memory:user-store
+#   Input: { content: string, user_id: string, metadata?: object }
+#   Output: Storage confirmation and memory ID
+
+# - memory:global-search
+#   Input: { query: string, category?: string, top_k?: number }
+#   Output: Global memory search results
+
+# - memory:global-store
+#   Input: { content: string, category?: string, metadata?: object }
+#   Output: Storage confirmation and memory ID
+
+# - memory:user-delete
+#   Input: { memory_id: string, user_id: string }
+#   Output: Deletion confirmation
+
+# - memory:global-delete
+#   Input: { memory_id: string }
+#   Output: Deletion confirmation (admin only)

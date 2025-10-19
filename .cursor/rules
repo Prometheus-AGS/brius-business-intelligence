@@ -1,0 +1,127 @@
+# Cursor Rules for Brius Business Intelligence
+
+## Architecture & Design Principles
+
+### 1. Feature-Based Clean Architecture
+- Use feature-based clean architecture pattern throughout the codebase
+- Organize code by business features, not technical layers
+- Each feature should be self-contained with its own types, logic, and interfaces
+
+### 2. Shared Types Management
+- ALL shared types MUST be placed in `src/mastra/types/*` directory
+- Export all types through `src/mastra/types/index.ts`
+- Never duplicate type definitions across features
+- Use a single source of truth for all shared interfaces and types
+
+### 3. Documentation-Driven Development
+- All architectural and development standards decisions are documented in the `docs/` subdirectory
+- Always refer to `docs/` for the current architectural plan
+- Update documentation when making architectural changes
+
+### 4. Code Validation Requirements
+- ALWAYS validate generated code using the context7 MCP server
+- ALWAYS validate against the Mastra MCP docs server
+- Ensure all code follows Mastra framework best practices
+- Use Zod schemas for all input/output validation
+
+### 5. Code Duplication Prevention
+- Avoid duplicating any code or types
+- When creating or extending features, use existing classes and implementations
+- NEVER create "enhanced*" versions of classes (e.g., EnhancedWeatherAgent)
+- Maintain ONE version of any implementation to avoid confusion
+
+## Mastra-Specific Rules
+
+### 6. Agent & Workflow Registration (CRITICAL)
+- When generating new agent or workflow code, ALWAYS register them with the main Mastra object
+- All agents and workflows MUST be visible in the Mastra playground
+- NEVER, EVER break this rule - registration is mandatory
+- Register in `src/mastra/index.ts`
+
+### 7. Agent & Workflow Design Logic
+Follow this hierarchy for designing agents and workflows:
+
+#### Workflows Containing Agents (Preferred Pattern)
+- Workflows provide structured, deterministic execution with explicit control flow
+- Include agents as steps when you need:
+  - Natural language generation from user input
+  - Reasoning or decision-making at specific points
+  - LLM-powered transformations in a larger pipeline
+
+#### Agents Using Workflows (Also Supported)
+- Agents can use workflows as tools for predefined sequences
+- Use when agents need to trigger complex multi-step operations
+
+#### Best Practices:
+- **Use workflows when** you need:
+  - Explicit control over execution order
+  - Human-in-the-loop approvals
+  - State persistence and resumability
+  - Parallel or branching execution paths
+
+- **Use agents when** you need:
+  - Autonomous reasoning and decision-making
+  - Dynamic tool selection
+  - Open-ended problem solving
+
+- **General Pattern**: Workflows orchestrate the structure, agents provide the intelligence within that structure
+
+## Code Standards
+
+### 8. Naming Conventions
+- Use kebab-case for file names: `weather-agent.ts`, `weather-tool.ts`
+- Use hyphenated, descriptive IDs: `get-weather`, `fetch-weather`
+- Prefer named exports over default exports
+- Agent IDs, tool IDs, and workflow step IDs should stay hyphenated and descriptive
+
+### 9. TypeScript & Code Style
+- Use ECMAScript modules with strict TypeScript
+- Favor async/await patterns throughout
+- Use 2-space indentation
+- Keep AI instructions or prompts inside template literals with consistent indentation
+- Target ES2022 with Node.js >=20.9.0
+
+### 10. Package Management (CRITICAL)
+- **pnpm is the ONLY package manager allowed** - never use npm or yarn
+- Always use `pnpm install` for installing dependencies
+- Use pnpm commands: `pnpm dev`, `pnpm build`, `pnpm test`, `pnpm start`
+- Maintain `pnpm-lock.yaml` for version consistency
+- All documentation and scripts must reference pnpm commands
+
+### 11. Testing Requirements
+- Use Vitest or Jest for unit tests
+- Mock external HTTP calls when testing
+- Test workflows programmatically with fixture inputs
+- Name test files `<module>.test.ts` beside the implementation
+- New features must ship with at least one automated test
+
+## File Organization
+
+```
+src/mastra/
+├── index.ts              # Main Mastra configuration and registration (CRITICAL)
+├── agents/               # AI agents with instructions and memory
+├── tools/                # Executable tools with Zod schemas
+├── workflows/            # Multi-step workflow pipelines
+└── types/
+    ├── index.ts          # Central type exports (REQUIRED)
+    ├── agents.ts         # Agent-related types
+    ├── workflows.ts      # Workflow-related types
+    └── tools.ts          # Tool-related types
+
+docs/                     # Architectural decisions and standards
+```
+
+## Validation Checklist
+
+Before committing any code:
+- [ ] Types are properly exported from `src/mastra/types/index.ts`
+- [ ] No code duplication exists
+- [ ] Agents/workflows are registered in `src/mastra/index.ts`
+- [ ] Code validated against context7 MCP server
+- [ ] Code validated against Mastra MCP docs server
+- [ ] Tests are written and passing
+- [ ] Documentation is updated if architectural changes were made
+- [ ] Zod schemas are used for validation where applicable
+- [ ] pnpm is used for all package management operations
+- [ ] pnpm-lock.yaml is maintained and up to date

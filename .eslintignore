@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Generated files
+*.min.js
+
+# Configuration files
+*.config.js
+eslint.config.js
+
+# Logs
+*.log
+
+# Environment files
+.env*
+
+# Database files
+*.db
+*.db-*
+
+# Mastra framework files
+.mastra/
+
+# Lock files
+pnpm-lock.yaml
+package-lock.json
+yarn.lock

@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__tavily-mcp__tavily-search",
+      "Bash(.specify/scripts/bash/create-new-feature.sh:*)",
+      "Bash(.specify/scripts/bash/setup-plan.sh:*)",
+      "Bash(.specify/scripts/bash/update-agent-context.sh claude)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh:*)",
+      "Bash(git rev-parse:*)",
+      "mcp__sequential-thinking__sequentialthinking",
+      "Bash(pnpm add:*)",
+      "Bash(./.specify/scripts/bash/check-prerequisites.sh:*)",
+      "mcp__mastra__mastraDocs",
+      "Bash(pnpm run:*)",
+      "Bash(find:*)",
+      "Bash(for:*)",
+      "Bash(do)",
+      "Bash(echo:*)",
+      "Bash(done)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "Bash(npx tsc:*)",
+      "SlashCommand(/speckit.constitution)",
+      "SlashCommand(/speckit.analyze)",
+      "mcp__mcp-filesystem__create_directory"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

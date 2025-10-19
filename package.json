@@ -7,7 +7,16 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "mastra dev",
     "build": "mastra build",
-    "start": "mastra start"
+    "start": "mastra start",
+    "mcp:start": "node --loader ts-node/esm src/mastra/mcp-server/start.ts",
+    "mcp:start:stdio": "node --loader ts-node/esm src/mastra/mcp-server/start.ts --transport stdio",
+    "mcp:start:sse": "node --loader ts-node/esm src/mastra/mcp-server/start.ts --transport sse",
+    "mcp:start:dev": "node --loader ts-node/esm src/mastra/mcp-server/start.ts --environment development --log-level debug",
+    "mcp:start:prod": "node --loader ts-node/esm src/mastra/mcp-server/start.ts --environment production --log-level info",
+    "mcp:health": "curl -s http://localhost:3001/health | jq",
+    "mcp:stats": "curl -s http://localhost:3001/stats | jq",
+    "mcp:info": "curl -s http://localhost:3001/info | jq",
+    "mcp:test": "node --loader ts-node/esm src/mastra/mcp-server/test-integration.ts"
   },
   "keywords": [],
   "author": "",
@@ -17,15 +26,46 @@
     "node": ">=20.9.0"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.52",
+    "@aws-sdk/client-bedrock-runtime": "^3.913.0",
     "@mastra/core": "^0.21.1",
     "@mastra/libsql": "^0.15.2",
     "@mastra/loggers": "^0.10.16",
+    "@mastra/mcp": "^0.13.5",
     "@mastra/memory": "^0.15.7",
-    "zod": "^4.1.12"
+    "@mastra/pg": "^0.17.4",
+    "@modelcontextprotocol/sdk": "^1.20.1",
+    "@supabase/mcp-server-supabase": "^0.5.6",
+    "@supabase/supabase-js": "^2.75.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/pg": "^8.15.5",
+    "ai": "5.0.76",
+    "aws-sdk": "^2.1692.0",
+    "commander": "^14.0.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "drizzle-kit": "^0.31.5",
+    "drizzle-orm": "^0.44.6",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "langfuse": "^3.38.6",
+    "pg": "^8.16.3",
+    "pgvector": "^0.2.1",
+    "vitest": "^3.2.4",
+    "zod": "4.1.12"
   },
   "devDependencies": {
     "@types/node": "^24.8.1",
+    "@typescript-eslint/eslint-plugin": "^8.46.1",
+    "@typescript-eslint/parser": "^8.46.1",
+    "eslint": "^9.38.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
     "mastra": "^0.17.0",
-    "typescript": "^5.9.3"
+    "prettier": "^3.6.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "undici": "^7.16.0"
   }
 }

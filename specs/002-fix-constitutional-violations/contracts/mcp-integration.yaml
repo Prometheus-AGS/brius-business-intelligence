@@ -1,0 +1,669 @@
+openapi: 3.0.3
+info:
+  title: MCP Integration API
+  description: API contracts for Supabase MCP server integration and validation against Mastra/Context7 MCP servers
+  version: 1.0.0
+  contact:
+    name: Constitutional Compliance Team
+
+servers:
+  - url: http://localhost:3000/api/mcp
+    description: Local development server
+
+paths:
+  /servers:
+    get:
+      summary: List configured MCP servers
+      description: Returns all configured MCP servers with their status and capabilities
+      operationId: listMCPServers
+      responses:
+        '200':
+          description: MCP servers retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPServerList'
+
+    post:
+      summary: Add MCP server configuration
+      description: Adds a new MCP server configuration for constitutional compliance
+      operationId: addMCPServer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPServerConfig'
+      responses:
+        '201':
+          description: MCP server configuration added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPServerResponse'
+        '400':
+          description: Invalid MCP server configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /servers/{serverName}/connect:
+    post:
+      summary: Connect to MCP server
+      description: Establishes connection to specified MCP server
+      operationId: connectToMCPServer
+      parameters:
+        - name: serverName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successfully connected to MCP server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPConnectionResponse'
+        '503':
+          description: Unable to connect to MCP server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /servers/{serverName}/tools:
+    get:
+      summary: List available tools from MCP server
+      description: Returns all available tools from the specified MCP server
+      operationId: listMCPTools
+      parameters:
+        - name: serverName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: MCP tools retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPToolList'
+        '404':
+          description: MCP server not found or not connected
+
+  /servers/{serverName}/tools/{toolName}/call:
+    post:
+      summary: Call MCP tool
+      description: Executes a tool call on the specified MCP server with comprehensive tracing
+      operationId: callMCPTool
+      parameters:
+        - name: serverName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: toolName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MCPToolCall'
+      responses:
+        '200':
+          description: Tool call executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPToolResponse'
+        '400':
+          description: Invalid tool call parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Tool execution failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /validation/mastra:
+    post:
+      summary: Validate against Mastra MCP server
+      description: Validates framework compliance using Mastra MCP server
+      operationId: validateMastraCompliance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MastraValidationRequest'
+      responses:
+        '200':
+          description: Validation completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResponse'
+
+  /validation/context7:
+    post:
+      summary: Validate against Context7 MCP server
+      description: Validates documentation compliance using Context7 MCP server
+      operationId: validateContext7Compliance
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Context7ValidationRequest'
+      responses:
+        '200':
+          description: Validation completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResponse'
+
+  /supabase/setup:
+    post:
+      summary: Setup Supabase MCP server
+      description: Configures Supabase MCP server using built-in capabilities
+      operationId: setupSupabaseMCP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupabaseMCPSetup'
+      responses:
+        '201':
+          description: Supabase MCP server configured successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupabaseMCPResponse'
+        '400':
+          description: Invalid Supabase configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /supabase/health:
+    get:
+      summary: Check Supabase MCP server health
+      description: Validates Supabase MCP server connectivity and feature availability
+      operationId: checkSupabaseMCPHealth
+      responses:
+        '200':
+          description: Supabase MCP server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupabaseMCPHealth'
+        '503':
+          description: Supabase MCP server is unhealthy
+
+  /registry:
+    get:
+      summary: Get MCP tool registry
+      description: Returns comprehensive registry of all available MCP tools from connected servers
+      operationId: getMCPRegistry
+      responses:
+        '200':
+          description: MCP tool registry retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MCPRegistry'
+
+components:
+  schemas:
+    MCPServerConfig:
+      type: object
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+          description: Unique server name
+        type:
+          type: string
+          enum: [stdio, http, sse]
+          description: MCP transport type
+        command:
+          type: string
+          description: Command to execute (for stdio type)
+        args:
+          type: array
+          items:
+            type: string
+          description: Command arguments
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Environment variables
+        url:
+          type: string
+          format: uri
+          description: Server URL (for http/sse types)
+        features:
+          type: array
+          items:
+            type: string
+          description: Enabled feature groups
+        readOnly:
+          type: boolean
+          default: false
+          description: Whether server operates in read-only mode
+
+    MCPServerList:
+      type: object
+      required:
+        - servers
+      properties:
+        servers:
+          type: array
+          items:
+            type: object
+            required:
+              - name
+              - status
+              - capabilities
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+                enum: [connected, disconnected, error]
+              capabilities:
+                type: object
+                properties:
+                  tools:
+                    type: integer
+                    description: Number of available tools
+                  prompts:
+                    type: integer
+                    description: Number of available prompts
+                  resources:
+                    type: integer
+                    description: Number of available resources
+              lastConnected:
+                type: string
+                format: date-time
+              error:
+                type: string
+                description: Last connection error
+
+    MCPServerResponse:
+      type: object
+      required:
+        - serverName
+        - status
+      properties:
+        serverName:
+          type: string
+        status:
+          type: string
+          enum: [configured, connected, failed]
+        message:
+          type: string
+
+    MCPConnectionResponse:
+      type: object
+      required:
+        - serverName
+        - connected
+        - capabilities
+      properties:
+        serverName:
+          type: string
+        connected:
+          type: boolean
+        capabilities:
+          type: object
+          properties:
+            protocolVersion:
+              type: string
+            tools:
+              type: array
+              items:
+                type: string
+            prompts:
+              type: array
+              items:
+                type: string
+            resources:
+              type: array
+              items:
+                type: string
+        connectionTime:
+          type: string
+          format: date-time
+
+    MCPToolList:
+      type: object
+      required:
+        - serverName
+        - tools
+      properties:
+        serverName:
+          type: string
+        tools:
+          type: array
+          items:
+            type: object
+            required:
+              - name
+              - description
+            properties:
+              name:
+                type: string
+              description:
+                type: string
+              inputSchema:
+                type: object
+                description: JSON schema for tool input
+              namespace:
+                type: string
+                description: Tool namespace to avoid conflicts
+
+    MCPToolCall:
+      type: object
+      required:
+        - arguments
+      properties:
+        arguments:
+          type: object
+          description: Tool call arguments
+        userContext:
+          type: object
+          properties:
+            userId:
+              type: string
+            sessionId:
+              type: string
+            traceId:
+              type: string
+        timeout:
+          type: integer
+          description: Tool execution timeout in milliseconds
+        enableTracing:
+          type: boolean
+          default: true
+
+    MCPToolResponse:
+      type: object
+      required:
+        - toolName
+        - serverName
+        - result
+        - metadata
+      properties:
+        toolName:
+          type: string
+        serverName:
+          type: string
+        result:
+          description: Tool execution result
+        error:
+          type: string
+          description: Error message if execution failed
+        metadata:
+          type: object
+          properties:
+            executionTime:
+              type: integer
+              description: Execution time in milliseconds
+            traceId:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+
+    MastraValidationRequest:
+      type: object
+      required:
+        - components
+      properties:
+        components:
+          type: array
+          items:
+            type: object
+            required:
+              - type
+              - name
+              - definition
+            properties:
+              type:
+                type: string
+                enum: [agent, workflow, tool]
+              name:
+                type: string
+              definition:
+                type: object
+                description: Component definition to validate
+        framework:
+          type: object
+          properties:
+            version:
+              type: string
+            features:
+              type: array
+              items:
+                type: string
+
+    Context7ValidationRequest:
+      type: object
+      required:
+        - library
+        - usage
+      properties:
+        library:
+          type: string
+          description: Library name to validate against
+        usage:
+          type: object
+          description: Usage patterns to validate
+        context:
+          type: string
+          description: Additional context for validation
+
+    ValidationResponse:
+      type: object
+      required:
+        - validationId
+        - results
+        - overall
+      properties:
+        validationId:
+          type: string
+          format: uuid
+        results:
+          type: array
+          items:
+            type: object
+            required:
+              - component
+              - isValid
+              - issues
+            properties:
+              component:
+                type: string
+              componentName:
+                type: string
+              isValid:
+                type: boolean
+              issues:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      enum: [deprecation, breaking_change, missing_property, type_mismatch]
+                    severity:
+                      type: string
+                      enum: [error, warning, info]
+                    message:
+                      type: string
+                    suggestion:
+                      type: string
+        overall:
+          type: object
+          required:
+            - compliant
+            - score
+          properties:
+            compliant:
+              type: boolean
+            score:
+              type: number
+              minimum: 0
+              maximum: 100
+            recommendations:
+              type: array
+              items:
+                type: string
+
+    SupabaseMCPSetup:
+      type: object
+      required:
+        - projectRef
+        - accessToken
+      properties:
+        projectRef:
+          type: string
+          description: Supabase project reference ID
+        accessToken:
+          type: string
+          description: Supabase personal access token
+        features:
+          type: array
+          items:
+            type: string
+            enum: [database, docs, edge-functions, branching, storage]
+          default: [database, docs]
+        readOnly:
+          type: boolean
+          default: true
+          description: Enable read-only mode for safety
+
+    SupabaseMCPResponse:
+      type: object
+      required:
+        - configured
+        - serverName
+        - features
+      properties:
+        configured:
+          type: boolean
+        serverName:
+          type: string
+        features:
+          type: array
+          items:
+            type: string
+        connectionString:
+          type: string
+          description: Generated MCP connection configuration
+
+    SupabaseMCPHealth:
+      type: object
+      required:
+        - status
+        - features
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        features:
+          type: object
+          properties:
+            database:
+              type: object
+              properties:
+                available:
+                  type: boolean
+                responseTime:
+                  type: number
+            docs:
+              type: object
+              properties:
+                available:
+                  type: boolean
+                searchFunctional:
+                  type: boolean
+            edgeFunctions:
+              type: object
+              properties:
+                available:
+                  type: boolean
+                deploymentCapable:
+                  type: boolean
+        lastHealthCheck:
+          type: string
+          format: date-time
+
+    MCPRegistry:
+      type: object
+      required:
+        - totalServers
+        - totalTools
+        - registry
+      properties:
+        totalServers:
+          type: integer
+        totalTools:
+          type: integer
+        registry:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              serverName:
+                type: string
+              status:
+                type: string
+                enum: [active, inactive, error]
+              tools:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    namespace:
+                      type: string
+                    description:
+                      type: string
+                    schema:
+                      type: object
+        lastUpdated:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object

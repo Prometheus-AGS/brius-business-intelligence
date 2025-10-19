@@ -1,0 +1,71 @@
+{
+  "name": "Brius Business Intelligence",
+  "description": "Mastra-based business intelligence application with feature-based clean architecture",
+  "architecture": {
+    "pattern": "feature-based-clean-architecture",
+    "framework": "mastra",
+    "language": "typescript"
+  },
+  "rules": [
+    {
+      "category": "Architecture",
+      "rules": [
+        "Use feature-based clean architecture pattern",
+        "All shared types must be placed in src/mastra/types/* directory",
+        "Export all types through src/mastra/types/index.ts",
+        "Refer to docs/ subdirectory for architectural and development standards",
+        "Avoid duplicating code or types - reuse existing implementations",
+        "Never create 'enhanced*' versions of classes - maintain ONE version per implementation"
+      ]
+    },
+    {
+      "category": "Validation",
+      "rules": [
+        "Validate code generation using context7 MCP server",
+        "Validate against Mastra MCP docs server",
+        "Use Zod schemas for all input/output validation"
+      ]
+    },
+    {
+      "category": "Agents & Workflows",
+      "rules": [
+        "ALWAYS register new agents and workflows with main Mastra object",
+        "Ensure all agents/workflows are visible in playground",
+        "Workflows orchestrate structure, agents provide intelligence",
+        "Use workflows for structured, deterministic execution",
+        "Use agents for autonomous reasoning and decision-making",
+        "Combine workflows containing agents for complex operations"
+      ]
+    },
+    {
+      "category": "Code Standards",
+      "rules": [
+        "Use kebab-case for file names (weather-agent.ts, weather-tool.ts)",
+        "Use hyphenated, descriptive IDs (get-weather, fetch-weather)",
+        "Prefer named exports over default exports",
+        "Use async/await patterns throughout",
+        "Keep AI prompts in template literals with consistent indentation"
+      ]
+    },
+    {
+      "category": "Package Management",
+      "rules": [
+        "pnpm is the ONLY package manager - never use npm or yarn",
+        "Always use pnpm install for dependencies",
+        "Use pnpm commands for all package operations (pnpm dev, pnpm build, pnpm test)",
+        "Maintain pnpm-lock.yaml for version consistency",
+        "Reference pnpm in all documentation and scripts"
+      ]
+    }
+  ],
+  "project_structure": {
+    "src/mastra/": {
+      "index.ts": "Main Mastra configuration and registration",
+      "agents/": "AI agents with instructions and memory",
+      "tools/": "Executable tools with zod schemas",
+      "workflows/": "Multi-step workflow pipelines",
+      "types/": "Shared types and interfaces"
+    },
+    "docs/": "Architectural and development standards documentation"
+  }
+}

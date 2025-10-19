@@ -1,0 +1,438 @@
+openapi: 3.0.3
+info:
+  title: pgvector Database Migration API
+  description: API contracts for constitutional compliance database migration from Supabase to pgvector 17
+  version: 1.0.0
+  contact:
+    name: Constitutional Compliance Team
+
+servers:
+  - url: http://localhost:3000/api/database
+    description: Local development server
+
+paths:
+  /migration/status:
+    get:
+      summary: Get migration status
+      description: Returns the current status of database migration from Supabase to pgvector 17
+      operationId: getMigrationStatus
+      responses:
+        '200':
+          description: Migration status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationStatus'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /migration/start:
+    post:
+      summary: Start database migration
+      description: Initiates migration from Supabase database to pgvector 17
+      operationId: startMigration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationRequest'
+      responses:
+        '202':
+          description: Migration started successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationResponse'
+        '400':
+          description: Invalid migration request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Migration already in progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vector/search:
+    post:
+      summary: Semantic vector search
+      description: Performs semantic search using pgvector functions
+      operationId: vectorSearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VectorSearchRequest'
+      responses:
+        '200':
+          description: Search results retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VectorSearchResponse'
+        '400':
+          description: Invalid search request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /vector/hybrid-search:
+    post:
+      summary: Hybrid text and vector search
+      description: Performs combined text and vector search using postgres functions
+      operationId: hybridSearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HybridSearchRequest'
+      responses:
+        '200':
+          description: Hybrid search results retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HybridSearchResponse'
+
+  /health:
+    get:
+      summary: Database health check
+      description: Checks pgvector database connectivity and function availability
+      operationId: getDatabaseHealth
+      responses:
+        '200':
+          description: Database is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Database is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+components:
+  schemas:
+    MigrationStatus:
+      type: object
+      required:
+        - migrationId
+        - status
+        - progress
+        - startedAt
+      properties:
+        migrationId:
+          type: string
+          format: uuid
+          description: Unique identifier for the migration operation
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+          description: Current migration status
+        progress:
+          type: number
+          minimum: 0
+          maximum: 100
+          description: Migration progress percentage
+        startedAt:
+          type: string
+          format: date-time
+          description: Migration start timestamp
+        completedAt:
+          type: string
+          format: date-time
+          description: Migration completion timestamp
+          nullable: true
+        error:
+          type: string
+          description: Error message if migration failed
+          nullable: true
+        details:
+          type: object
+          properties:
+            recordsMigrated:
+              type: integer
+              description: Number of records successfully migrated
+            totalRecords:
+              type: integer
+              description: Total number of records to migrate
+            currentOperation:
+              type: string
+              description: Current migration operation being performed
+
+    MigrationRequest:
+      type: object
+      required:
+        - sourceConfig
+        - targetConfig
+        - options
+      properties:
+        sourceConfig:
+          type: object
+          required:
+            - connectionString
+            - type
+          properties:
+            connectionString:
+              type: string
+              description: Supabase database connection string
+            type:
+              type: string
+              enum: [supabase]
+        targetConfig:
+          type: object
+          required:
+            - connectionString
+            - type
+          properties:
+            connectionString:
+              type: string
+              description: pgvector 17 database connection string
+            type:
+              type: string
+              enum: [pgvector]
+        options:
+          type: object
+          properties:
+            preserveData:
+              type: boolean
+              default: true
+              description: Whether to preserve existing data during migration
+            validateAfterMigration:
+              type: boolean
+              default: true
+              description: Whether to validate data integrity after migration
+            batchSize:
+              type: integer
+              default: 1000
+              description: Number of records to process in each batch
+
+    MigrationResponse:
+      type: object
+      required:
+        - migrationId
+        - status
+        - message
+      properties:
+        migrationId:
+          type: string
+          format: uuid
+          description: Unique identifier for the migration operation
+        status:
+          type: string
+          enum: [started]
+        message:
+          type: string
+          description: Human-readable status message
+        estimatedDuration:
+          type: integer
+          description: Estimated migration duration in seconds
+
+    VectorSearchRequest:
+      type: object
+      required:
+        - embedding
+        - searchTable
+      properties:
+        embedding:
+          type: array
+          items:
+            type: number
+          minItems: 1536
+          maxItems: 1536
+          description: Query embedding vector (1536 dimensions)
+        searchTable:
+          type: string
+          enum: [user_memories, global_memories, document_chunks]
+          description: Target table for vector search
+        userFilter:
+          type: string
+          description: User ID filter (required for user_memories)
+          nullable: true
+        matchThreshold:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.8
+          description: Minimum similarity threshold for results
+        matchCount:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+          description: Maximum number of results to return
+
+    VectorSearchResponse:
+      type: object
+      required:
+        - results
+        - processingTime
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - content
+              - similarity
+            properties:
+              id:
+                type: string
+                format: uuid
+              content:
+                type: string
+              similarity:
+                type: number
+                minimum: 0
+                maximum: 1
+              metadata:
+                type: object
+        processingTime:
+          type: number
+          description: Search processing time in milliseconds
+
+    HybridSearchRequest:
+      type: object
+      required:
+        - queryText
+        - queryEmbedding
+        - searchTable
+      properties:
+        queryText:
+          type: string
+          description: Text query for full-text search
+        queryEmbedding:
+          type: array
+          items:
+            type: number
+          minItems: 1536
+          maxItems: 1536
+          description: Query embedding vector
+        searchTable:
+          type: string
+          enum: [document_chunks]
+          description: Target table for hybrid search
+        textWeight:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.3
+          description: Weight for text search results
+        vectorWeight:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.7
+          description: Weight for vector search results
+        matchCount:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+
+    HybridSearchResponse:
+      type: object
+      required:
+        - results
+        - processingTime
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required:
+              - id
+              - content
+              - rank
+            properties:
+              id:
+                type: string
+                format: uuid
+              content:
+                type: string
+              rank:
+                type: number
+                description: Combined ranking score
+              metadata:
+                type: object
+        processingTime:
+          type: number
+
+    HealthStatus:
+      type: object
+      required:
+        - status
+        - checks
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        checks:
+          type: object
+          properties:
+            database:
+              type: object
+              required:
+                - status
+                - responseTime
+              properties:
+                status:
+                  type: string
+                  enum: [up, down]
+                responseTime:
+                  type: number
+                  description: Database response time in milliseconds
+            pgvector:
+              type: object
+              required:
+                - status
+                - version
+              properties:
+                status:
+                  type: string
+                  enum: [available, unavailable]
+                version:
+                  type: string
+                  description: pgvector extension version
+            functions:
+              type: object
+              required:
+                - semanticSearch
+                - hybridSearch
+              properties:
+                semanticSearch:
+                  type: boolean
+                  description: Whether semantic_search function is available
+                hybridSearch:
+                  type: boolean
+                  description: Whether hybrid_search function is available
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error type or code
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error details

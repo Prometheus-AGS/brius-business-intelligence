@@ -1,0 +1,639 @@
+openapi: 3.0.3
+info:
+  title: Enhanced LangFuse Observability API
+  description: API contracts for comprehensive LangFuse integration with tool call tracing, agent monitoring, and workflow execution tracking
+  version: 1.0.0
+  contact:
+    name: Constitutional Compliance Team
+
+servers:
+  - url: http://localhost:3000/api/observability
+    description: Local development server
+
+paths:
+  /traces:
+    post:
+      summary: Create comprehensive trace
+      description: Creates a new trace with enhanced metadata for tool calls, agents, or workflows
+      operationId: createTrace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TraceRequest'
+      responses:
+        '201':
+          description: Trace created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceResponse'
+        '400':
+          description: Invalid trace request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /traces/{traceId}/events:
+    post:
+      summary: Add event to trace
+      description: Adds performance, error, or checkpoint events to an existing trace
+      operationId: addTraceEvent
+      parameters:
+        - name: traceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TraceEvent'
+      responses:
+        '201':
+          description: Event added successfully
+        '404':
+          description: Trace not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /traces/{traceId}/spans:
+    post:
+      summary: Create span within trace
+      description: Creates a new span for tool execution, agent step, or workflow operation
+      operationId: createSpan
+      parameters:
+        - name: traceId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpanRequest'
+      responses:
+        '201':
+          description: Span created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpanResponse'
+
+  /tool-calls/{toolCallId}/trace:
+    put:
+      summary: Update tool call tracing
+      description: Updates comprehensive tool call trace with results, errors, and performance metrics
+      operationId: updateToolCallTrace
+      parameters:
+        - name: toolCallId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolCallTraceUpdate'
+      responses:
+        '200':
+          description: Tool call trace updated successfully
+        '404':
+          description: Tool call trace not found
+
+  /agents/{agentName}/interactions:
+    post:
+      summary: Record agent interaction
+      description: Records agent interaction with user attribution and conversation context
+      operationId: recordAgentInteraction
+      parameters:
+        - name: agentName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentInteraction'
+      responses:
+        '201':
+          description: Interaction recorded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InteractionResponse'
+
+  /workflows/{workflowId}/steps/{stepId}:
+    put:
+      summary: Update workflow step status
+      description: Updates workflow step execution status with performance metrics and checkpoints
+      operationId: updateWorkflowStep
+      parameters:
+        - name: workflowId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: stepId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkflowStepUpdate'
+      responses:
+        '200':
+          description: Workflow step updated successfully
+
+  /errors:
+    post:
+      summary: Capture comprehensive error
+      description: Captures error with full context, categorization, and fingerprinting
+      operationId: captureError
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorCapture'
+      responses:
+        '201':
+          description: Error captured successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorCaptureResponse'
+
+  /errors/analysis:
+    get:
+      summary: Get error analysis
+      description: Returns comprehensive error analysis with patterns and recommendations
+      operationId: getErrorAnalysis
+      parameters:
+        - name: timeRange
+          in: query
+          schema:
+            type: string
+            enum: [hour, day, week, month]
+            default: day
+        - name: component
+          in: query
+          schema:
+            type: string
+            enum: [agent, workflow, tool, mcp]
+      responses:
+        '200':
+          description: Error analysis retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorAnalysis'
+
+  /circuit-breaker/status:
+    get:
+      summary: Get circuit breaker status
+      description: Returns current status of LangFuse circuit breaker
+      operationId: getCircuitBreakerStatus
+      responses:
+        '200':
+          description: Circuit breaker status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CircuitBreakerStatus'
+
+components:
+  schemas:
+    TraceRequest:
+      type: object
+      required:
+        - name
+        - component
+        - operation
+      properties:
+        name:
+          type: string
+          description: Human-readable trace name
+        component:
+          type: string
+          enum: [agent, workflow, tool, mcp]
+          description: System component being traced
+        operation:
+          type: string
+          description: Specific operation being performed
+        userId:
+          type: string
+          description: User identifier for attribution
+        sessionId:
+          type: string
+          description: Session identifier for grouping
+        conversationId:
+          type: string
+          description: Conversation identifier for context
+        input:
+          description: Input data for the operation
+        metadata:
+          type: object
+          description: Additional metadata for the trace
+        tags:
+          type: array
+          items:
+            type: string
+          description: Tags for categorization and filtering
+
+    TraceResponse:
+      type: object
+      required:
+        - traceId
+        - status
+      properties:
+        traceId:
+          type: string
+          format: uuid
+          description: Unique trace identifier
+        status:
+          type: string
+          enum: [created, active, completed, failed]
+        createdAt:
+          type: string
+          format: date-time
+
+    TraceEvent:
+      type: object
+      required:
+        - name
+        - level
+      properties:
+        name:
+          type: string
+          description: Event name
+        level:
+          type: string
+          enum: [DEBUG, DEFAULT, WARNING, ERROR]
+          description: Event severity level
+        input:
+          description: Event input data
+        output:
+          description: Event output data
+        metadata:
+          type: object
+          description: Event metadata
+        timestamp:
+          type: string
+          format: date-time
+          description: Event timestamp
+
+    SpanRequest:
+      type: object
+      required:
+        - name
+        - spanType
+      properties:
+        name:
+          type: string
+          description: Span name
+        spanType:
+          type: string
+          enum: [tool_execution, agent_step, workflow_operation]
+        input:
+          description: Span input data
+        metadata:
+          type: object
+          properties:
+            timeout:
+              type: integer
+              description: Operation timeout in milliseconds
+            dependencies:
+              type: array
+              items:
+                type: string
+              description: Dependencies for this operation
+            executionId:
+              type: string
+              description: Unique execution identifier
+
+    SpanResponse:
+      type: object
+      required:
+        - spanId
+        - status
+      properties:
+        spanId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [started, completed, failed]
+        startedAt:
+          type: string
+          format: date-time
+
+    ToolCallTraceUpdate:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [started, completed, failed, timeout]
+        output:
+          description: Tool execution output
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+            stack:
+              type: string
+            name:
+              type: string
+        performance:
+          type: object
+          properties:
+            duration:
+              type: integer
+              description: Execution duration in milliseconds
+            tokensUsed:
+              type: integer
+              description: Number of tokens consumed
+            cost:
+              type: number
+              description: Execution cost
+        mcpMetadata:
+          type: object
+          properties:
+            serverName:
+              type: string
+            latency:
+              type: integer
+            protocol:
+              type: string
+
+    AgentInteraction:
+      type: object
+      required:
+        - interactionType
+        - userId
+      properties:
+        interactionType:
+          type: string
+          enum: [message, feedback, action, reasoning]
+        userId:
+          type: string
+        sessionId:
+          type: string
+        conversationId:
+          type: string
+        content:
+          description: Interaction content
+        feedback:
+          type: object
+          properties:
+            rating:
+              type: integer
+              minimum: 1
+              maximum: 5
+            comment:
+              type: string
+            category:
+              type: string
+        reasoning:
+          type: object
+          properties:
+            thought:
+              type: string
+            confidence:
+              type: number
+              minimum: 0
+              maximum: 1
+            alternatives:
+              type: array
+              items:
+                type: string
+        userMetadata:
+          type: object
+          description: Additional user context
+
+    InteractionResponse:
+      type: object
+      required:
+        - interactionId
+        - recorded
+      properties:
+        interactionId:
+          type: string
+          format: uuid
+        recorded:
+          type: boolean
+        scoreId:
+          type: string
+          format: uuid
+          description: Score ID if feedback was recorded
+
+    WorkflowStepUpdate:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [started, completed, failed, skipped]
+        output:
+          description: Step output data
+        error:
+          type: string
+        performance:
+          type: object
+          properties:
+            duration:
+              type: integer
+            checkpoints:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  timestamp:
+                    type: integer
+                  data:
+                    type: object
+            bottlenecks:
+              type: array
+              items:
+                type: object
+                properties:
+                  phase:
+                    type: string
+                  duration:
+                    type: integer
+        dependencies:
+          type: object
+          properties:
+            completed:
+              type: array
+              items:
+                type: string
+            failed:
+              type: array
+              items:
+                type: string
+
+    ErrorCapture:
+      type: object
+      required:
+        - error
+        - context
+      properties:
+        error:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+            name:
+              type: string
+            stack:
+              type: string
+        context:
+          type: object
+          required:
+            - component
+          properties:
+            traceId:
+              type: string
+            userId:
+              type: string
+            sessionId:
+              type: string
+            component:
+              type: string
+              enum: [agent, workflow, tool, mcp]
+            operation:
+              type: string
+            input:
+              description: Input that caused the error
+            metadata:
+              type: object
+
+    ErrorCaptureResponse:
+      type: object
+      required:
+        - errorId
+        - fingerprint
+        - category
+        - severity
+      properties:
+        errorId:
+          type: string
+          format: uuid
+        fingerprint:
+          type: string
+          description: Error fingerprint for deduplication
+        category:
+          type: string
+          description: Error category
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+
+    ErrorAnalysis:
+      type: object
+      required:
+        - totalErrors
+        - topErrors
+        - errorsByComponent
+        - recommendations
+      properties:
+        totalErrors:
+          type: integer
+        topErrors:
+          type: array
+          items:
+            type: object
+            properties:
+              fingerprint:
+                type: string
+              count:
+                type: integer
+              lastSeen:
+                type: string
+                format: date-time
+              category:
+                type: string
+              severity:
+                type: string
+        errorsByComponent:
+          type: object
+          additionalProperties:
+            type: integer
+        recommendations:
+          type: array
+          items:
+            type: object
+            properties:
+              priority:
+                type: string
+                enum: [high, medium, low]
+              action:
+                type: string
+              rationale:
+                type: string
+
+    CircuitBreakerStatus:
+      type: object
+      required:
+        - state
+        - failures
+        - lastFailTime
+      properties:
+        state:
+          type: string
+          enum: [closed, open, half-open]
+        failures:
+          type: integer
+          description: Number of consecutive failures
+        lastFailTime:
+          type: integer
+          description: Timestamp of last failure
+        healthcheck:
+          type: object
+          properties:
+            langfuseConnectivity:
+              type: boolean
+            lastSuccessfulOperation:
+              type: string
+              format: date-time
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: object

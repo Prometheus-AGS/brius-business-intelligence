@@ -1,50 +1,92 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report:
+- Version change: [TEMPLATE] → 1.0.0 (Initial constitution based on docs/README.md)
+- Modified principles: All template placeholders replaced with project-specific principles
+- Added sections: Architecture Standards, Development Workflow
+- Removed sections: None
+- Templates requiring updates:
+  ✅ Updated constitution.md
+  ✅ Validated plan-template.md (Constitution Check section aligns with new principles)
+  ✅ Validated spec-template.md (Requirements and success criteria align with architecture standards)
+  ✅ Validated tasks-template.md (Testing and implementation phases support constitution requirements)
+  ✅ Validated other templates (checklist-template.md, agent-file-template.md compatible)
+- Follow-up TODOs: Monitor compliance during actual implementation phases
+-->
+
+# Brius Business Intelligence Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. pgvector Database Architecture (NON-NEGOTIABLE)
+The local database for the agent itself MUST use pgvector 17, NOT Supabase database. Database operations MUST be handled through postgres functions called by pg npm module or drizzle/drizzlekit. This ensures proper vector storage, semantic search capabilities, and maintains architectural consistency with the business intelligence requirements.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Mastra Framework Compliance
+All code MUST follow Mastra framework best practices and be validated against the latest Mastra APIs using available MCP servers (mastra mcp server, context7 mcp server). Agent and workflow registration with the main Mastra object is MANDATORY - all components MUST be visible in the Mastra playground. No exceptions to registration requirements.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Comprehensive Observability with LangFuse
+Tool call tracing to LangFuse MUST be implemented comprehensively, including requests, results, and errors. This is NOT optional - proper observability is required for business intelligence operations monitoring, debugging, and performance analysis. All agent interactions and workflow executions MUST be traceable.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Model Context Protocol (MCP) Integration
+Supabase MCP server integration is MANDATORY and MUST be properly configured using the built-in capabilities of new Supabase installations. MCP client and server implementations MUST follow the documented patterns with proper configuration management and error handling.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Feature-Based Clean Architecture
+Code organization MUST follow feature-based clean architecture patterns, not technical layers. Each feature MUST be self-contained with its own types, logic, and interfaces. All shared types MUST be placed in `src/mastra/types/*` directory and exported through `src/mastra/types/index.ts`. NO code duplication is permitted.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+## Architecture Standards
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### Database Requirements
+- pgvector 17 with AWS Bedrock Titan v2 embeddings
+- Postgres functions for vector operations
+- Drizzle/DrizzleKit for database schema management
+- User-scoped and global memory management
+- Proper indexing for semantic search performance
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+### API and Integration Standards
+- OpenAI-compatible API endpoints for model access
+- Comprehensive MCP server configuration
+- Real-time data processing capabilities
+- RESTful API design with proper error handling
+- WebSocket support for real-time updates
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### Agent and Workflow Architecture
+- Intent classification for intelligent routing
+- Knowledge-first planning workflows
+- Multi-agent orchestration capabilities
+- Memory integration with authentication middleware
+- Performance metrics collection and analysis
+
+## Development Workflow
+
+### Code Quality Requirements
+- TypeScript strict mode with ES2022 target
+- Zod schemas for all input/output validation
+- Comprehensive error handling and logging
+- async/await patterns throughout codebase
+- Named exports preferred over default exports
+
+### Testing and Validation
+- All code MUST be validated against Mastra MCP docs server
+- Unit tests using Vitest or Jest
+- Integration tests for agent workflows
+- Mock external API calls in tests
+- Test files named `<module>.test.ts`
+
+### Documentation and Standards
+- All architectural decisions documented in `docs/` directory
+- Conventional commit messages required
+- Feature documentation with examples
+- API documentation with OpenAPI specifications
+- README files for complex features
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+This constitution supersedes all other development practices and standards. All code changes MUST comply with these principles before merging. Amendments require:
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+1. Documentation of proposed changes with rationale
+2. Validation against existing codebase architecture
+3. Migration plan for existing code if needed
+4. Approval through standard review process
+
+All pull requests MUST verify compliance with constitution principles. Any architectural complexity MUST be justified against business intelligence requirements. The `docs/README.md` serves as the authoritative source for detailed implementation guidance.
+
+**Version**: 1.0.0 | **Ratified**: 2025-01-18 | **Last Amended**: 2025-01-18

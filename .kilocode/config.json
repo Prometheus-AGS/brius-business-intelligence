@@ -1,0 +1,87 @@
+{
+  "project": {
+    "name": "Brius Business Intelligence",
+    "type": "mastra-typescript",
+    "architecture": "feature-based-clean"
+  },
+  "codeGeneration": {
+    "validation": {
+      "enabled": true,
+      "servers": [
+        "context7",
+        "mastra-mcp-docs"
+      ]
+    },
+    "standards": {
+      "typeSystem": {
+        "location": "src/mastra/types/*",
+        "exportPath": "src/mastra/types/index.ts",
+        "pattern": "centralized-types",
+        "validation": "zod-schemas"
+      },
+      "naming": {
+        "files": "kebab-case",
+        "ids": "hyphenated-descriptive",
+        "exports": "named-preferred"
+      },
+      "architecture": {
+        "pattern": "feature-based-clean",
+        "documentation": "docs/",
+        "registration": "src/mastra/index.ts"
+      }
+    }
+  },
+  "rules": {
+    "duplication": {
+      "policy": "strictly-forbidden",
+      "enforcement": "fail-on-duplicate",
+      "message": "Reuse existing implementations. No 'enhanced*' versions allowed."
+    },
+    "registration": {
+      "agents": "MANDATORY",
+      "workflows": "MANDATORY",
+      "location": "src/mastra/index.ts",
+      "visibility": "playground-required"
+    },
+    "validation": {
+      "pre-generation": ["context7", "mastra-docs"],
+      "post-generation": ["type-check", "lint", "test"]
+    },
+    "packageManager": {
+      "required": "pnpm",
+      "commands": {
+        "install": "pnpm install",
+        "dev": "pnpm dev",
+        "build": "pnpm build",
+        "test": "pnpm test"
+      },
+      "lockfile": "pnpm-lock.yaml",
+      "enforcement": "fail-on-other-managers",
+      "message": "pnpm is the ONLY package manager allowed. Never use npm or yarn."
+    }
+  },
+  "patterns": {
+    "agents": {
+      "purpose": "autonomous-reasoning-decision-making",
+      "structure": "instructions-memory-tools",
+      "registration": "required-in-main-mastra-object"
+    },
+    "workflows": {
+      "purpose": "structured-deterministic-execution",
+      "pattern": "orchestrate-structure-provide-intelligence",
+      "composition": "workflows-contain-agents-preferred"
+    },
+    "tools": {
+      "validation": "zod-input-output-schemas",
+      "naming": "descriptive-hyphenated-ids",
+      "async": "async-await-required"
+    }
+  },
+  "directories": {
+    "src/mastra/agents/": "AI agents with specific instructions and memory",
+    "src/mastra/tools/": "Executable functions with Zod validation",
+    "src/mastra/workflows/": "Multi-step processes chaining tools and agents",
+    "src/mastra/types/": "Shared types and interfaces",
+    "docs/": "Architectural decisions and development standards"
+  }
+}
