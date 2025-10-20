@@ -60,7 +60,7 @@ const WorkflowExecutionInputSchema = z.object({
     userId: z.string().optional().describe('User identifier for personalization'),
     sessionId: z.string().optional().describe('Session identifier for context continuity'),
     traceId: z.string().optional().describe('Trace identifier for observability'),
-    metadata: z.record(z.any()).optional().describe('Additional context metadata'),
+    metadata: z.record(z.string(), z.unknown()).optional().describe('Additional context metadata'),
   }).optional().describe('Execution context for the workflow'),
   options: z.object({
     timeout: z.number().int().min(1000).max(600000).optional().describe('Timeout in milliseconds'),
@@ -140,14 +140,14 @@ function createWorkflowExecutionTool(workflowId: string, workflow: any) {
         let result;
         let stepsExecuted: string[] = [];
 
-        if (workflowId === 'orchestrator') {
-          const { executeOrchestrator } = await import('../../workflows/orchestrator.js');
-          result = await executeOrchestrator(workflowInput, {
-            traceId: executionContext.traceId,
-            userId: executionContext.userId,
-            timeout: options.timeout,
-          });
-          stepsExecuted = ['intent-classification', 'route-execution', 'response-generation'];
+        if (workflowId === 'default-orchestration') {
+          const { executeDefaultOrchestration } = await import('../../workflows/default-orchestration.js');
+          result = await executeDefaultOrchestration(workflowInput);
+          stepsExecuted = ['classify-intent', 'fetch-memory', 'fetch-knowledge', 'compile-context', 'execute-agent'];
+        } else if (workflowId === 'business-intelligence-orchestration') {
+          const { executeBusinessIntelligenceOrchestration } = await import('../../workflows/business-intelligence-orchestration.js');
+          result = await executeBusinessIntelligenceOrchestration(workflowInput);
+          stepsExecuted = ['classify-intent', 'fetch-memory', 'fetch-knowledge', 'planning', 'compile-context', 'execute-agent'];
         } else if (workflowId === 'planning') {
           const { executePlanning } = await import('../../workflows/planning.js');
           result = await executePlanning(workflowInput, {
@@ -301,7 +301,7 @@ function createWorkflowInfoTool(workflowId: string, workflow: any) {
           capabilities: {
             resumable: workflowId !== 'intent-classifier', // Most workflows support resumability
             parallel: false, // Currently no parallel workflows
-            conditional: workflowId === 'orchestrator', // Orchestrator has conditional routing
+            conditional: workflowId.includes('orchestration'),
             looping: false, // Currently no looping workflows
           },
         };
@@ -405,7 +405,7 @@ export const listWorkflowsTool = createTool({
             workflowInfo.capabilities = {
               resumable: workflowId !== 'intent-classifier',
               parallel: false,
-              conditional: workflowId === 'orchestrator',
+              conditional: workflowId.includes('orchestration'),
             };
           }
 
@@ -596,7 +596,8 @@ export const workflowHealthCheckTool = createTool({
  */
 function getWorkflowDescription(workflowId: string): string {
   const descriptions: Record<string, string> = {
-    'orchestrator': 'Coordinates business intelligence requests through intent classification and intelligent routing',
+    'default-orchestration': 'Runs classification, memory/knowledge retrieval, and default agent execution',
+    'business-intelligence-orchestration': 'Executes planning workflow then runs the business intelligence agent with context',
     'planning': 'Generates execution plans for complex business queries with knowledge context',
     'intent-classifier': 'Classifies user intents and determines appropriate response strategies',
   };
@@ -605,7 +606,8 @@ function getWorkflowDescription(workflowId: string): string {
 
 function getWorkflowType(workflowId: string): string {
   const types: Record<string, string> = {
-    'orchestrator': 'orchestration',
+    'default-orchestration': 'orchestration',
+    'business-intelligence-orchestration': 'orchestration',
     'planning': 'analysis',
     'intent-classifier': 'classification',
   };
@@ -614,7 +616,8 @@ function getWorkflowType(workflowId: string): string {
 
 function getWorkflowCategory(workflowId: string): string {
   const categories: Record<string, string> = {
-    'orchestrator': 'orchestration',
+    'default-orchestration': 'orchestration',
+    'business-intelligence-orchestration': 'orchestration',
     'planning': 'analysis',
     'intent-classifier': 'classification',
   };
@@ -623,12 +626,26 @@ function getWorkflowCategory(workflowId: string): string {
 
 function getWorkflowOutputSchema(workflowId: string): any {
   const schemas: Record<string, any> = {
-    'orchestrator': {
+    'default-orchestration': {
       type: 'object',
       properties: {
-        response: { type: 'string', description: 'Generated response' },
-        intent: { type: 'string', description: 'Classified intent' },
-        confidence: { type: 'number', description: 'Confidence score' },
+        selected_agent: { type: 'string' },
+        agent_response: { type: 'object' },
+        classification: { type: 'object' },
+        memory_context: { type: 'array', items: { type: 'object' } },
+        knowledge_context: { type: 'array', items: { type: 'object' } },
+        execution_path: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    'business-intelligence-orchestration': {
+      type: 'object',
+      properties: {
+        selected_agent: { type: 'string' },
+        agent_response: { type: 'object' },
+        plan: { type: 'array', items: { type: 'object' } },
+        knowledge_context: { type: 'array', items: { type: 'object' } },
+        memory_context: { type: 'array', items: { type: 'object' } },
+        confidence_score: { type: 'number' },
       },
     },
     'planning': {
@@ -642,7 +659,6 @@ function getWorkflowOutputSchema(workflowId: string): any {
               step_number: { type: 'number' },
               action: { type: 'string' },
               tool: { type: 'string' },
-              parameters: { type: 'object' },
             },
           },
         },
@@ -653,9 +669,9 @@ function getWorkflowOutputSchema(workflowId: string): any {
     'intent-classifier': {
       type: 'object',
       properties: {
-        intent: { type: 'string', description: 'Classified intent' },
-        confidence: { type: 'number', description: 'Classification confidence' },
-        category: { type: 'string', description: 'Intent category' },
+        classification: { type: 'object' },
+        complexity_analysis: { type: 'object' },
+        routing_decision: { type: 'object' },
       },
     },
   };

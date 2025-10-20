@@ -1,166 +1,211 @@
+import dotenv from 'dotenv';
+
+// Load environment variables FIRST before any other imports
+dotenv.config();
 
 import { Mastra } from '@mastra/core/mastra';
+import { DefaultExporter } from '@mastra/core/ai-tracing';
 import { PinoLogger } from '@mastra/loggers';
-import { PostgresStore } from '@mastra/pg';
 import { env, getPort } from './config/environment.js';
-import { initializeDatabase } from './config/database.js';
-import { getConnectionManager } from './database/connection.js';
-import { vectorStorage } from './memory/storage.js';
-import { initializeLangFuse } from './observability/langfuse.js';
-import { getLangFuseClient } from './observability/langfuse-client.js';
-import { getToolCallTracer } from './observability/tool-tracer.js';
-import { getAgentInteractionTracer } from './observability/agent-tracer.js';
-import { getWorkflowExecutionTracer } from './observability/workflow-tracer.js';
-import { getObservabilityDashboard } from './observability/dashboard.js';
-import { rootLogger } from './observability/logger.js';
-
-// Import agents
-import { businessIntelligenceAgent, EnhancedBusinessIntelligenceAgent } from './agents/business-intelligence.js';
-import { defaultAgent, EnhancedDefaultAgent } from './agents/default.js';
-import { sharedTools } from './agents/shared-tools.js';
-
-// Import workflows
+import {
+  getPostgresStore,
+  getVectorStore,
+  getMemoryStore,
+  ensureVectorIndexes
+} from './config/consolidated-database.js';
+import { businessIntelligenceAgent, executeBusinessIntelligenceAgent } from './agents/business-intelligence.js';
+import { defaultAgent, executeDefaultAgent } from './agents/default.js';
+import { ensureMcpToolsLoaded, getSharedToolMap, getBedrockTools, getToolCounts } from './agents/shared-tools.js';
 import { intentClassifierWorkflow } from './workflows/intent-classifier.js';
-import { orchestratorWorkflow } from './workflows/orchestrator.js';
-import { planningWorkflow, EnhancedPlanningWorkflow } from './workflows/planning.js';
+import { defaultOrchestrationWorkflow, executeDefaultOrchestration } from './workflows/default-orchestration.js';
+import { businessIntelligenceOrchestrationWorkflow, executeBusinessIntelligenceOrchestration } from './workflows/business-intelligence-orchestration.js';
+import { planningWorkflow, executePlanning } from './workflows/planning.js';
+import { rootLogger } from './observability/logger.js';
+import { getKnowledgeRoutes } from './api/routes/knowledge.js';
+import { documentProcessingQueue } from './knowledge/processing-queue.js';
 
-// Initialize core services (Constitutional requirement: pgvector database)
-initializeDatabase();
-initializeLangFuse();
+// Add global error handlers to prevent crashes
+process.on('uncaughtException', (error) => {
+  if (error.message.includes('Connection terminated unexpectedly')) {
+    rootLogger.warn('Database connection error handled gracefully', {
+      error: error.message,
+      type: 'database_connection'
+    });
+    return; // Don't crash the application
+  }
+  
+  rootLogger.error('Uncaught exception', {
+    error: error.message,
+    stack: error.stack
+  });
+  process.exit(1);
+});
 
-// Initialize comprehensive observability system (Constitutional requirement)
-const langfuseClient = getLangFuseClient();
-const toolTracer = getToolCallTracer();
-const agentTracer = getAgentInteractionTracer();
-const workflowTracer = getWorkflowExecutionTracer();
-const observabilityDashboard = getObservabilityDashboard();
+process.on('unhandledRejection', (reason, promise) => {
+  if (reason && typeof reason === 'object' && 'message' in reason &&
+      typeof reason.message === 'string' && reason.message.includes('Connection terminated unexpectedly')) {
+    rootLogger.warn('Database connection rejection handled gracefully', {
+      reason: reason.message,
+      type: 'database_connection'
+    });
+    return; // Don't crash the application
+  }
+  
+  rootLogger.error('Unhandled promise rejection', {
+    reason: reason instanceof Error ? reason.message : reason,
+    stack: reason instanceof Error ? reason.stack : undefined
+  });
+});
 
-// Initialize pgvector connection for constitutional compliance
-const connectionManager = getConnectionManager();
+// Create observability configuration
+const observabilityConfig = env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY
+  ? {
+      configs: {
+        langfuse: {
+          serviceName: 'brius-business-intelligence',
+          exporters: [new DefaultExporter()],
+        },
+      },
+      configSelector: () => 'langfuse',
+    }
+  : {
+      default: { enabled: true },
+    };
 
-// Initialize enhanced agents and workflows for comprehensive tracing (Constitutional requirement)
-const enhancedBusinessIntelligenceAgent = new EnhancedBusinessIntelligenceAgent();
-const enhancedDefaultAgent = new EnhancedDefaultAgent();
-const enhancedPlanningWorkflow = new EnhancedPlanningWorkflow();
-
-// Agents are already configured with their tools in their respective files
-
-// Registered agents and workflows (using enhanced instances for comprehensive tracing)
-const registeredAgents = {
-  'business-intelligence-agent': enhancedBusinessIntelligenceAgent, // Enhanced with comprehensive tracing
-  'default-agent': enhancedDefaultAgent, // Enhanced with comprehensive tracing
-};
-
-const registeredWorkflows = {
-  'intent-classifier': intentClassifierWorkflow,
-  'orchestrator': orchestratorWorkflow,
-  'planning': enhancedPlanningWorkflow, // Enhanced with comprehensive tracing
-};
-
-// Main Mastra configuration (Constitutional requirement: pgvector database)
+// Create Mastra instance with proper error handling
 export const mastra = new Mastra({
-  workflows: registeredWorkflows,
-  agents: registeredAgents,
-  storage: new PostgresStore({
-    connectionString: env.PGVECTOR_DATABASE_URL, // Constitutional compliance: Use pgvector instead of Supabase
-  }),
+  agents: {
+    [businessIntelligenceAgent.name]: businessIntelligenceAgent,
+    [defaultAgent.name]: defaultAgent,
+  },
+  workflows: {
+    [intentClassifierWorkflow.id]: intentClassifierWorkflow,
+    [defaultOrchestrationWorkflow.id]: defaultOrchestrationWorkflow,
+    [businessIntelligenceOrchestrationWorkflow.id]: businessIntelligenceOrchestrationWorkflow,
+    [planningWorkflow.id]: planningWorkflow,
+  },
+  storage: getPostgresStore(),
+  vectors: { primary: getVectorStore() },
   logger: new PinoLogger({
-    name: 'Mastra-BI-System',
+    name: 'brius-bi-system',
     level: (process.env.MASTRA_LOG_LEVEL as any) || 'info',
   }),
   telemetry: {
-    enabled: false, // Deprecated
+    enabled: false,
   },
-  observability: {
-    default: { enabled: true },
+  observability: observabilityConfig,
+  server: {
+    apiRoutes: [
+      ...getKnowledgeRoutes(),
+    ],
   },
 });
 
-// Export configuration for other modules (Constitutional compliance: pgvector database)
+// Initialize database and tools with proper error handling
+async function initializeServices() {
+  try {
+    rootLogger.info('Initializing Mastra services');
+    
+    // Add delay to ensure database is ready
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Initialize vector indexes with error handling
+    try {
+      await ensureVectorIndexes();
+      rootLogger.info('Vector indexes initialized successfully');
+    } catch (error) {
+      rootLogger.warn('Vector index initialization failed, continuing without vectors', {
+        error: error instanceof Error ? error.message : error
+      });
+    }
+
+    // Initialize MCP tools with error handling
+    try {
+      await ensureMcpToolsLoaded();
+      rootLogger.info('MCP tools loaded successfully', getToolCounts());
+    } catch (error) {
+      rootLogger.warn('MCP tools initialization failed, continuing without MCP tools', {
+        error: error instanceof Error ? error.message : error
+      });
+    }
+
+    // Start background services
+    try {
+      documentProcessingQueue.start();
+      rootLogger.info('Document processing queue started');
+    } catch (error) {
+      rootLogger.warn('Document processing queue failed to start', {
+        error: error instanceof Error ? error.message : error
+      });
+    }
+
+    rootLogger.info('Mastra services initialization completed');
+  } catch (error) {
+    rootLogger.error('Critical service initialization error', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+  }
+}
+
+// Start initialization
+initializeServices().catch((error) => {
+  rootLogger.error('Fatal service initialization error:', error);
+});
+
+// Configuration and health info
 export const config = {
   port: getPort(),
   environment: env.NODE_ENV,
   database: {
-    url: env.PGVECTOR_DATABASE_URL, // Constitutional compliance: Use pgvector instead of Supabase
+    url: env.PGVECTOR_DATABASE_URL,
     type: 'pgvector',
-    version: '17',
   },
   observability: {
-    langfuse_enabled: Boolean(env.LANGFUSE_PUBLIC_KEY),
-  },
-  mcp: {
-    server_port: parseInt(env.MCP_SERVER_PORT, 10),
-    config_path: env.MCP_CONFIG_PATH,
-  },
-  storage: {
-    vector_storage: 'pgvector', // Constitutional compliance marker
-    embedding_dimensions: 1536,
+    langfuse: Boolean(env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY),
   },
 };
 
-// Health check endpoint data (Constitutional compliance: pgvector database)
 export const healthInfo = {
-  service: 'mastra-bi-system',
+  service: 'brius-business-intelligence',
   version: '1.0.0',
   environment: env.NODE_ENV,
   features: {
-    agents: Object.keys(registeredAgents).length,
-    workflows: Object.keys(registeredWorkflows).length,
-    shared_tools: sharedTools.length,
-    mcp_client: true,
-    mcp_server: true,
-    memory_system: true,
-    knowledge_base: true,
-    observability: Boolean(env.LANGFUSE_PUBLIC_KEY),
-    comprehensive_tracing: true,
-    tool_tracing: toolTracer.isEnabled(),
-    agent_tracing: agentTracer.isEnabled(),
-    workflow_tracing: workflowTracer.isEnabled(),
-    observability_dashboard: true,
-    openai_api: true,
-    intelligent_routing: true,
-    complexity_analysis: true,
-    pgvector_database: true, // Constitutional compliance marker
-    vector_search: true,
-    hybrid_search: true,
+    agent_count: Object.keys(mastra.getAgents()).length,
+    workflow_count: Object.keys(mastra.getWorkflows()).length,
+    langfuse_enabled: Boolean(env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY),
+    memory_enabled: true,
+    knowledge_base_enabled: true,
+    bedrock_llm_enabled: true,
   },
-  agents: Object.keys(registeredAgents),
-  workflows: Object.keys(registeredWorkflows),
-  tools: sharedTools.map(tool => tool.id),
-  database: {
-    type: 'pgvector',
-    version: 17,
-    embedding_dimensions: 1536,
-  },
+  agents: Object.keys(mastra.getAgents()),
+  workflows: Object.keys(mastra.getWorkflows()),
+  tools: Object.keys(getSharedToolMap()),
+  tool_counts: getToolCounts(),
 };
 
-rootLogger.info('Mastra BI System initialized', {
-  version: healthInfo.version,
-  environment: env.NODE_ENV,
-  port: getPort(),
-  features: healthInfo.features,
-  registered_agents: Object.keys(registeredAgents),
-  registered_workflows: Object.keys(registeredWorkflows),
-  shared_tools: sharedTools.length,
+rootLogger.info('Mastra initialized', {
+  service: healthInfo.service,
+  environment: healthInfo.environment,
+  agents: healthInfo.agents,
+  workflows: healthInfo.workflows,
+  port: config.port,
 });
 
-// Export agents and workflows for direct access
-export { registeredAgents as agents, registeredWorkflows as workflows, sharedTools };
-
-// Export individual components for specific imports
-export {
-  businessIntelligenceAgent,
-  enhancedBusinessIntelligenceAgent, // Enhanced version for constitutional compliance
-  defaultAgent,
-  enhancedDefaultAgent, // Enhanced version for constitutional compliance
-  intentClassifierWorkflow,
-  orchestratorWorkflow,
-  planningWorkflow,
-  enhancedPlanningWorkflow, // Enhanced version for constitutional compliance
+// Legacy exports for backward compatibility
+export const agents = {
+  [businessIntelligenceAgent.name]: businessIntelligenceAgent,
+  [defaultAgent.name]: defaultAgent,
 };
 
-// Export execution functions for programmatic access
-export { executeBusinessIntelligenceAgent } from './agents/business-intelligence.js';
-export { executeDefaultAgent } from './agents/default.js';
-export { executeOrchestrator } from './workflows/orchestrator.js';
-export { executePlanning } from './workflows/planning.js';
+export const workflows = {
+  [intentClassifierWorkflow.id]: intentClassifierWorkflow,
+  [defaultOrchestrationWorkflow.id]: defaultOrchestrationWorkflow,
+  [businessIntelligenceOrchestrationWorkflow.id]: businessIntelligenceOrchestrationWorkflow,
+  [planningWorkflow.id]: planningWorkflow,
+};
+
+// Function exports
+export { executeBusinessIntelligenceAgent, executeDefaultAgent };
+export { executeDefaultOrchestration, executeBusinessIntelligenceOrchestration, executePlanning };
+export { getSharedToolMap, getBedrockTools, getToolCounts };

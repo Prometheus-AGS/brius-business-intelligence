@@ -15,11 +15,11 @@ import { APITracer } from '../../observability/tracing.js';
 // Validation schemas
 const ExecuteToolSchema = z.object({
   toolId: z.string().min(1),
-  arguments: z.record(z.any()),
+  arguments: z.record(z.string(), z.unknown()),
   metadata: z.object({
     sessionId: z.string().optional(),
     source: z.enum(['playground', 'agent', 'api']).default('playground'),
-  }).optional().default({}),
+  }).optional().default(() => ({ source: 'playground' as const })),
 });
 
 const ToolFilterSchema = z.object({

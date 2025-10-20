@@ -51,7 +51,7 @@ const AgentExecutionInputSchema = z.object({
     userId: z.string().optional().describe('User identifier for personalization'),
     sessionId: z.string().optional().describe('Session identifier for context continuity'),
     traceId: z.string().optional().describe('Trace identifier for observability'),
-    metadata: z.record(z.any()).optional().describe('Additional context metadata'),
+    metadata: z.record(z.string(), z.unknown()).optional().describe('Additional context metadata'),
   }).optional().describe('Execution context for the agent'),
   options: z.object({
     maxSteps: z.number().int().min(1).max(50).optional().describe('Maximum execution steps'),

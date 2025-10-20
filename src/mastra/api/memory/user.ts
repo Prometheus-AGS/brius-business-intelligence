@@ -13,7 +13,7 @@ import { APITracer } from '../../observability/tracing.js';
 // Request validation schemas
 const StoreMemorySchema = z.object({
   content: z.string().min(1).max(10000),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   category: z.string().optional(),
   importance: z.enum(['low', 'medium', 'high']).default('medium'),
 });
@@ -28,7 +28,7 @@ const SearchMemorySchema = z.object({
 
 const UpdateMemorySchema = z.object({
   content: z.string().min(1).max(10000).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const GetMemoriesSchema = z.object({

@@ -22,7 +22,12 @@
       "Bash(npx tsc:*)",
       "SlashCommand(/speckit.constitution)",
       "SlashCommand(/speckit.analyze)",
-      "mcp__mcp-filesystem__create_directory"
+      "mcp__mcp-filesystem__create_directory",
+      "Bash(pnpm build)",
+      "Bash(node:*)",
+      "mcp__mcp-filesystem__read_multiple_files",
+      "mcp__mcp-filesystem__list_directory",
+      "mcp__mcp-filesystem__write_file"
     ],
     "deny": [],
     "ask": []

@@ -14,7 +14,7 @@ const MCPServerConfigSchema = z.object({
   name: z.string().min(1),
   command: z.string().min(1),
   args: z.array(z.string()).optional().default([]),
-  env: z.record(z.string()).optional().default({}),
+  env: z.record(z.string(), z.string()).optional().default({}),
   cwd: z.string().optional(),
   timeout: z.number().min(1000).optional().default(30000),
   restart: z.boolean().optional().default(true),
@@ -24,18 +24,18 @@ const MCPServerConfigSchema = z.object({
   categories: z.array(z.string()).optional().default([]),
   description: z.string().optional(),
   version: z.string().optional(),
-  metadata: z.record(z.any()).optional().default({}),
+  metadata: z.record(z.string(), z.unknown()).optional().default({}),
 });
 
 const MCPConfigSchema = z.object({
   version: z.string().default('1.0.0'),
-  servers: z.record(MCPServerConfigSchema),
+  servers: z.record(z.string(), MCPServerConfigSchema),
   global: z.object({
     timeout: z.number().min(1000).optional().default(30000),
     maxConcurrent: z.number().min(1).optional().default(10),
     retryAttempts: z.number().min(0).optional().default(3),
     retryDelay: z.number().min(100).optional().default(1000),
-    env: z.record(z.string()).optional().default({}),
+    env: z.record(z.string(), z.string()).optional().default({}),
   }).optional().default({}),
   extends: z.string().optional(),
   includes: z.array(z.string()).optional().default([]),

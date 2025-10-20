@@ -10,12 +10,12 @@ export interface CircuitBreakerConfig {
 }
 
 export interface ErrorContext {
-  component: 'agent' | 'workflow' | 'tool' | 'mcp' | 'database';
+  component: 'agent' | 'workflow' | 'tool' | 'mcp' | 'database' | 'system' | 'api';
   operation: string;
   userId?: string;
   sessionId?: string;
   traceId?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface SystemError {

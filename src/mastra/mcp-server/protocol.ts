@@ -11,7 +11,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { rootLogger } from '../observability/logger.js';
-import { mastra, agents, workflows, sharedTools } from '../index.js';
+import { mastra, agents, workflows, ensureMcpToolsLoaded, getSharedToolMap } from '../index.js';
 import { MCPTracer } from '../observability/langfuse.js';
 
 /**
@@ -216,6 +216,8 @@ export class MastraMCPProtocolHandler {
         }
 
         // Add shared tools as MCP tools
+        await ensureMcpToolsLoaded();
+        const sharedTools = Object.values(getSharedToolMap());
         for (const tool of sharedTools) {
           const metadata = this.getToolMetadata(tool);
           tools.push({
@@ -340,13 +342,12 @@ export class MastraMCPProtocolHandler {
 
           // Execute workflow using the configured execution function
           let result;
-          if (workflowId === 'orchestrator') {
-            const { executeOrchestrator } = await import('../workflows/orchestrator.js');
-            result = await executeOrchestrator(input, {
-              traceId: context.traceId,
-              userId: context.userId,
-              timeout: options.timeout,
-            });
+          if (workflowId === 'default-orchestration') {
+            const { executeDefaultOrchestration } = await import('../workflows/default-orchestration.js');
+            result = await executeDefaultOrchestration(input);
+          } else if (workflowId === 'business-intelligence-orchestration') {
+            const { executeBusinessIntelligenceOrchestration } = await import('../workflows/business-intelligence-orchestration.js');
+            result = await executeBusinessIntelligenceOrchestration(input);
           } else if (workflowId === 'planning') {
             const { executePlanning } = await import('../workflows/planning.js');
             result = await executePlanning(input, {
@@ -372,8 +373,10 @@ export class MastraMCPProtocolHandler {
 
         // Handle shared tool execution
         if (name.startsWith('tool-')) {
+          await ensureMcpToolsLoaded();
+          const toolsMap = getSharedToolMap();
           const toolId = name.replace('tool-', '');
-          const tool = sharedTools.find(t => t.id === toolId);
+          const tool = toolsMap[toolId];
 
           if (!tool) {
             throw new Error(`Tool ${toolId} not found`);
@@ -893,6 +896,7 @@ Use the knowledge search tools to find the most relevant and accurate informatio
         };
 
       case 'capabilities':
+        await ensureMcpToolsLoaded();
         return {
           contents: [
             {
@@ -907,7 +911,7 @@ Use the knowledge search tools to find the most relevant and accurate informatio
                 },
                 agents: Object.keys(agents),
                 workflows: Object.keys(workflows),
-                tools: sharedTools.map(tool => tool.id),
+                tools: Object.keys(getSharedToolMap()),
                 integrations: {
                   langfuse: Boolean(process.env.LANGFUSE_PUBLIC_KEY),
                   supabase: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
@@ -931,13 +935,14 @@ Use the knowledge search tools to find the most relevant and accurate informatio
 
     switch (resource) {
       case 'catalog':
+        await ensureMcpToolsLoaded();
         return {
           contents: [
             {
               uri,
               mimeType: 'application/json',
               text: JSON.stringify({
-                tools: sharedTools.map(tool => ({
+                tools: Object.values(getSharedToolMap()).map(tool => ({
                   id: tool.id,
                   name: tool.name,
                   description: tool.description,
@@ -945,7 +950,7 @@ Use the knowledge search tools to find the most relevant and accurate informatio
                   inputSchema: tool.inputSchema ? this.convertZodSchemaToJsonSchema(tool.inputSchema) : null,
                 })),
                 categories: this.getToolCategories(),
-                totalCount: sharedTools.length,
+                totalCount: Object.keys(getSharedToolMap()).length,
                 lastUpdated: new Date().toISOString(),
               }, null, 2),
             },
@@ -1020,7 +1025,7 @@ Use the knowledge search tools to find the most relevant and accurate informatio
   private getToolCategories() {
     const categories = new Map<string, number>();
 
-    for (const tool of sharedTools) {
+    for (const tool of Object.values(getSharedToolMap())) {
       const metadata = this.getToolMetadata(tool);
       categories.set(metadata.category, (categories.get(metadata.category) || 0) + 1);
     }

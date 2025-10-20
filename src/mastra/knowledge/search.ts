@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { getVectorOpsService } from '../database/vector-ops.js';
-import { getConnectionManager } from '../database/connection.js';
+import { getVectorStore, getConnectionPool } from '../config/consolidated-database.js';
 import { withErrorHandling } from '../observability/error-handling.js';
 import { generateSingleEmbedding } from '../memory/embeddings.js';
 import { knowledgeLogger } from '../observability/logger.js';
@@ -85,18 +84,22 @@ export interface SearchStats {
 // Validation schemas
 const SearchQuerySchema = z.object({
   query: z.string().min(1).max(1000),
-  filters: z.object({
-    documentIds: z.array(z.string()).optional(),
-    categories: z.array(z.string()).optional(),
-    tags: z.array(z.string()).optional(),
-    dateRange: z.object({
-      start: z.date(),
-      end: z.date(),
-    }).optional(),
-    userId: z.string().optional(),
-    minScore: z.number().min(0).max(1).optional(),
-    maxResults: z.number().min(1).max(100).default(20).optional(),
-  }).optional(),
+  filters: z
+    .object({
+      documentIds: z.array(z.string()).optional(),
+      categories: z.array(z.string()).optional(),
+      tags: z.array(z.string()).optional(),
+      dateRange: z
+        .object({
+          start: z.date(),
+          end: z.date(),
+        })
+        .optional(),
+      userId: z.string().optional(),
+      minScore: z.number().min(0).max(1).optional(),
+      maxResults: z.number().min(1).max(100).default(20),
+    })
+    .optional(),
   searchType: z.enum(['semantic', 'keyword', 'hybrid']).default('hybrid'),
   rerankResults: z.boolean().default(true),
 });
@@ -108,8 +111,8 @@ const SearchQuerySchema = z.object({
 export class KnowledgeSearchService {
   private searchHistory: Array<{ query: string; timestamp: Date; responseTime: number }> = [];
   private maxHistorySize = 1000;
-  private vectorOps = getVectorOpsService();
-  private connectionManager = getConnectionManager();
+  private vectorOps = getVectorStore();
+  private connectionManager = getConnectionPool();
 
   /**
    * Perform search across knowledge base
@@ -120,7 +123,7 @@ export class KnowledgeSearchService {
     knowledgeLogger.info('Starting knowledge base search', {
       query: searchQuery.query.substring(0, 100),
       search_type: searchQuery.searchType,
-      max_results: searchQuery.filters?.maxResults || 20,
+      max_results: searchQuery.filters?.maxResults ?? 20,
     });
 
     // Validate search query
@@ -188,6 +191,166 @@ export class KnowledgeSearchService {
     return response;
   }
 
+  async findSimilarDocuments(documentId: string, limit: number = 5): Promise<Array<{ documentId: string; title: string; similarity: number }>> {
+    const documentChunksQuery = `
+      SELECT embedding
+      FROM document_chunks
+      WHERE document_id = $1
+      ORDER BY chunk_index ASC
+      LIMIT 1
+    `;
+
+    const chunkResult = await this.connectionManager.query<{ embedding: string }>(documentChunksQuery, [documentId]);
+    if (chunkResult.rows.length === 0) {
+      return [];
+    }
+
+    const embedding = JSON.parse(chunkResult.rows[0].embedding) as number[];
+    const matches = await this.vectorOps.semanticSearch(embedding, {
+      searchTable: 'document_chunks',
+      matchCount: limit * 3,
+      matchThreshold: 0.3,
+    });
+
+    const similarDocuments: Array<{ documentId: string; title: string; similarity: number }> = [];
+
+    for (const match of matches) {
+      const docQuery = `
+        SELECT kd.id, kd.title
+        FROM knowledge_documents kd
+        JOIN document_chunks dc ON kd.id = dc.document_id
+        WHERE dc.id = $1
+      `;
+
+      const docResult = await this.connectionManager.query<{ id: string; title: string }>(docQuery, [match.id]);
+      const doc = docResult.rows[0];
+
+      if (!doc || doc.id === documentId) {
+        continue;
+      }
+
+      if (similarDocuments.find(existing => existing.documentId === doc.id)) {
+        continue;
+      }
+
+      similarDocuments.push({
+        documentId: doc.id,
+        title: doc.title,
+        similarity: match.similarity,
+      });
+
+      if (similarDocuments.length >= limit) {
+        break;
+      }
+    }
+
+    return similarDocuments;
+  }
+
+  async getSuggestions(prefix: string, limit: number = 10): Promise<string[]> {
+    if (!prefix) {
+      return [];
+    }
+
+    const query = `
+      SELECT title
+      FROM knowledge_documents
+      WHERE title ILIKE $1
+      ORDER BY updated_at DESC
+      LIMIT $2
+    `;
+
+    const result = await this.connectionManager.query<{ title: string }>(query, [`${prefix}%`, limit]);
+    return result.rows.map(row => row.title);
+  }
+
+  async getRecommendations(tags: string[], limit: number = 5): Promise<Array<{ documentId: string; title: string; tags: string[] }>> {
+    const recommendations: Array<{ documentId: string; title: string; tags: string[] }> = [];
+
+    if (tags.length > 0) {
+      const query = `
+        SELECT id, title, tags
+        FROM knowledge_documents
+        WHERE tags && $1::text[]
+        ORDER BY updated_at DESC
+        LIMIT $2
+      `;
+
+      const result = await this.connectionManager.query<{ id: string; title: string; tags: string[] }>(query, [tags, limit]);
+      recommendations.push(...result.rows.map(row => ({ documentId: row.id, title: row.title, tags: row.tags ?? [] })));
+    }
+
+    if (recommendations.length < limit) {
+      const fallbackQuery = `
+        SELECT id, title, tags
+        FROM knowledge_documents
+        ORDER BY updated_at DESC
+        LIMIT $1
+      `;
+
+      const fallback = await this.connectionManager.query<{ id: string; title: string; tags: string[] }>(fallbackQuery, [limit - recommendations.length]);
+      for (const row of fallback.rows) {
+        if (!recommendations.some(rec => rec.documentId === row.id)) {
+          recommendations.push({ documentId: row.id, title: row.title, tags: row.tags ?? [] });
+        }
+        if (recommendations.length >= limit) {
+          break;
+        }
+      }
+    }
+
+    return recommendations;
+  }
+
+  async getStats(): Promise<SearchStats> {
+    const documentsQuery = `
+      SELECT COUNT(*) as total_documents, COALESCE(SUM(file_size), 0) as total_size
+      FROM knowledge_documents
+    `;
+
+    const chunksQuery = `
+      SELECT COUNT(*) as total_chunks
+      FROM document_chunks
+    `;
+
+    const documentsResult = await this.connectionManager.query<{ total_documents: string; total_size: string }>(documentsQuery);
+    const chunksResult = await this.connectionManager.query<{ total_chunks: string }>(chunksQuery);
+
+    const searchesPerformed = this.searchHistory.length;
+    const averageResponseTime = searchesPerformed
+      ? this.searchHistory.reduce((sum, entry) => sum + entry.responseTime, 0) / searchesPerformed
+      : 0;
+
+    const popularQueriesMap = new Map<string, number>();
+    for (const entry of this.searchHistory) {
+      popularQueriesMap.set(entry.query, (popularQueriesMap.get(entry.query) ?? 0) + 1);
+    }
+
+    const popularQueries = Array.from(popularQueriesMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([query, count]) => ({ query, count }));
+
+    const categoriesQuery = `
+      SELECT category, COUNT(*) as count
+      FROM knowledge_documents
+      GROUP BY category
+      ORDER BY count DESC
+      LIMIT 10
+    `;
+
+    const categoriesResult = await this.connectionManager.query<{ category: string; count: string }>(categoriesQuery);
+
+    return {
+      totalDocuments: Number(documentsResult.rows[0]?.total_documents ?? 0),
+      totalChunks: Number(chunksResult.rows[0]?.total_chunks ?? 0),
+      searchesPerformed,
+      averageResponseTime,
+      popularQueries,
+      topCategories: categoriesResult.rows.map(row => ({ category: row.category, count: Number(row.count) })),
+    };
+  }
+
   /**
    * Perform semantic search using pgvector functions
    */
@@ -203,16 +366,16 @@ export class KnowledgeSearchService {
         const searchStartTime = Date.now();
 
         // Use pgvector semantic search function
-        const searchResults = await this.vectorOps.semanticSearch(queryEmbedding, {
-          searchTable: 'document_chunks',
-          matchThreshold: query.filters?.minScore || 0.3,
-          matchCount: query.filters?.maxResults || 20,
+    const searchResults = await this.vectorOps.semanticSearch(queryEmbedding, {
+      searchTable: 'document_chunks',
+      matchThreshold: query.filters?.minScore ?? 0.3,
+      matchCount: query.filters?.maxResults ?? 20,
         });
 
         const searchTime = Date.now() - searchStartTime;
 
         // Get additional document metadata for results
-        const results: SearchResult[] = [];
+    const results: SearchResult[] = [];
 
         for (const [index, result] of searchResults.entries()) {
           // Get document metadata using direct query
@@ -232,11 +395,11 @@ export class KnowledgeSearchService {
           if (!docData) continue;
 
           // Apply filters
-          if (query.filters?.documentIds?.length && !query.filters.documentIds.includes(docData.id)) {
+      if (query.filters?.documentIds?.length && !query.filters.documentIds.includes(docData.id)) {
             continue;
           }
 
-          if (query.filters?.categories?.length && !query.filters.categories.includes(docData.category)) {
+      if (query.filters?.categories?.length && !query.filters.categories.includes(docData.category)) {
             continue;
           }
 
@@ -280,7 +443,7 @@ export class KnowledgeSearchService {
         return results;
       },
       {
-        component: 'knowledge',
+        component: 'database',
         operation: 'semantic_search',
         metadata: {
           query: query.query.slice(0, 100),
@@ -390,7 +553,7 @@ export class KnowledgeSearchService {
         return results;
       },
       {
-        component: 'knowledge',
+        component: 'database',
         operation: 'keyword_search',
         metadata: {
           query: query.query.slice(0, 100),
@@ -514,7 +677,7 @@ export class KnowledgeSearchService {
         }
       },
       {
-        component: 'knowledge',
+        component: 'database',
         operation: 'hybrid_search',
         metadata: {
           query: query.query.slice(0, 100),
@@ -785,7 +948,7 @@ export class KnowledgeSearchService {
         };
       },
       {
-        component: 'knowledge',
+        component: 'database',
         operation: 'get_search_stats',
       },
       'low'

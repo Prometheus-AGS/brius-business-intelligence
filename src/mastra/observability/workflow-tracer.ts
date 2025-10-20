@@ -30,6 +30,7 @@ export type WorkflowStepType =
   | 'sequential'
   | 'loop'
   | 'human_input'
+  | 'human_approval'
   | 'data_transformation'
   | 'external_api'
   | 'decision_point';

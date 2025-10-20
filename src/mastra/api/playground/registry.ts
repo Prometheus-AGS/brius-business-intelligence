@@ -21,7 +21,7 @@ const ConnectServerSchema = z.object({
 
 const UpdateServerConfigSchema = z.object({
   serverId: z.string().min(1),
-  config: z.record(z.any()),
+  config: z.record(z.string(), z.unknown()),
 });
 
 const ServerActionSchema = z.object({

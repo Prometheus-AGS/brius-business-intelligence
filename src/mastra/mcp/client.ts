@@ -33,10 +33,10 @@ export type ConnectionStatus =
 export interface MCPTool {
   name: string;
   description?: string;
-  inputSchema: any;
+  inputSchema: unknown;
   namespace?: string;
   serverId: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface MCPResource {
@@ -45,13 +45,13 @@ export interface MCPResource {
   description?: string;
   mimeType?: string;
   serverId: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface MCPToolCall {
   id: string;
   tool: string;
-  arguments: Record<string, any>;
+  arguments: Record<string, unknown>;
   serverId: string;
   timestamp: Date;
 }
@@ -59,11 +59,11 @@ export interface MCPToolCall {
 export interface MCPToolResult {
   id: string;
   success: boolean;
-  result?: any;
+  result?: unknown;
   error?: string;
   executionTime: number;
   serverId: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface MCPClientOptions {
@@ -486,8 +486,12 @@ export class MCPClient extends EventEmitter {
     mcpLogger.info('Shutting down MCP Client');
 
     // Clear all timers
-    this.heartbeatTimers.forEach(timer => clearInterval(timer));
-    this.reconnectTimers.forEach(timer => clearTimeout(timer));
+    this.heartbeatTimers.forEach(timer => {
+      clearInterval(timer);
+    });
+    this.reconnectTimers.forEach(timer => {
+      clearTimeout(timer);
+    });
     this.heartbeatTimers.clear();
     this.reconnectTimers.clear();
 

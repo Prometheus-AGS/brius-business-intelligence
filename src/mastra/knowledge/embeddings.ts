@@ -74,14 +74,14 @@ const EmbeddingRequestSchema = z.object({
   text: z.string().min(1).max(25000), // Titan v2 limit
   inputType: z.enum(['search_document', 'search_query', 'classification', 'clustering']).default('search_document'),
   truncate: z.enum(['none', 'start', 'end']).default('end'),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const BatchEmbeddingRequestSchema = z.object({
   texts: z.array(z.object({
     text: z.string().min(1).max(25000),
     id: z.string().optional(),
-    metadata: z.record(z.any()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   })).min(1).max(100), // Reasonable batch size limit
   inputType: z.enum(['search_document', 'search_query', 'classification', 'clustering']).default('search_document'),
   truncate: z.enum(['none', 'start', 'end']).default('end'),

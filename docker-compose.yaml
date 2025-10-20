@@ -1,7 +1,9 @@
 services:
-  # PostgreSQL with pgvector extension
+  # PostgreSQL with pgvector extension and pgmq
   postgres:
-    image: pgvector/pgvector:pg17
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile
     container_name: mastra-postgres
     environment:
       POSTGRES_DB: mastra
@@ -9,10 +11,11 @@ services:
       POSTGRES_PASSWORD: mastra_password
       POSTGRES_HOST_AUTH_METHOD: trust
     ports:
-      - "5432:5432"
+      - "24322:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+      - ./init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql
+      - ./migrations:/docker-entrypoint-initdb.d/migrations
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mastra -d mastra"]
       interval: 10s
@@ -21,6 +24,81 @@ services:
     networks:
       - mastra-network
 
+  # Unstructured.io API (Open Source)
+  unstructured:
+    image: downloads.unstructured.io/unstructured-io/unstructured-api:latest
+    container_name: mastra-unstructured
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - UNSTRUCTURED_API_KEY=${UNSTRUCTURED_API_KEY:-}
+      - UNSTRUCTURED_MEMORY_FREE_MINIMUM_MB=2048
+      - MAX_LIFETIME_SECONDS=86400
+    volumes:
+      - ./data/unstructured-temp:/app/temp
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+        reservations:
+          memory: 2g
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/general/v0/general"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - mastra-network
+
+  # MinIO Object Storage (Optional)
+  minio:
+    image: minio/minio:latest
+    container_name: mastra-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - mastra-network
+    profiles:
+      - minio
+
+  # MinIO Client for bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: mastra-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
+      /usr/bin/mc mb myminio/document-originals --ignore-existing;
+      /usr/bin/mc policy set public myminio/document-originals;
+      exit 0;
+      "
+    networks:
+      - mastra-network
+    profiles:
+      - minio
 
   # Mastra playground application
   mastra:
@@ -31,7 +109,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      langfuse-web:
+      unstructured:
         condition: service_healthy
     ports:
       - "4000:4000"
@@ -58,17 +136,43 @@ services:
       MASTRA_LOG_LEVEL: info
       
       # Model configuration (using AI Gateway with Bedrock)
-      BEDROCK_MODEL_ID: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
-      BEDROCK_EMBEDDING_MODEL_ID: bedrock/amazon.titan-embed-text-v2:0
+      BEDROCK_CLAUDE_MODEL_ID: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+      BEDROCK_TITAN_MODEL_ID: bedrock/amazon.titan-embed-text-v2:0
+      
+      # Unstructured.io Configuration
+      UNSTRUCTURED_API_URL: http://unstructured:8000
+      UNSTRUCTURED_API_KEY: ${UNSTRUCTURED_API_KEY:-}
+      UNSTRUCTURED_TIMEOUT_MS: 300000
+      
+      # MinIO Configuration (Optional)
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET_NAME: document-originals
+      MINIO_USE_SSL: false
+      
+      # Queue Configuration
+      PGMQ_EXTRACTION_QUEUE: document_extraction
+      PGMQ_EMBEDDING_QUEUE: document_embedding
+      PGMQ_MAX_RETRIES: 3
+      PGMQ_RETRY_DELAY_MS: 5000
+      
+      # Processing Configuration
+      MAX_CONCURRENT_EXTRACTIONS: 2
+      MAX_CONCURRENT_EMBEDDINGS: 3
+      EMBEDDING_MODEL: titan-v2
+      EMBEDDING_DIMENSIONS: 1536
     volumes:
       - .:/app
       - /app/node_modules
+      - ./data/uploads:/app/data/uploads
     networks:
       - mastra-network
     restart: unless-stopped
 
 volumes:
   postgres_data:
+  minio_data:
 
 networks:
   mastra-network:

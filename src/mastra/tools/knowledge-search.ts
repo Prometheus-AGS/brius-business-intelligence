@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { createTool } from '@mastra/core/tools';
 import { knowledgeSearchService, SearchQuery } from '../knowledge/search.js';
-import { getConnectionManager } from '../database/connection.js';
+import { getConnectionPool } from '../config/consolidated-database.js';
 import { withErrorHandling } from '../observability/error-handling.js';
 import { knowledgeLogger } from '../observability/logger.js';
 import { getToolCallTracer, ToolExecutionContext } from '../observability/tool-tracer.js';
@@ -27,12 +27,12 @@ async function executeKnowledgeToolWithTracing<T>(
   const toolContext: ToolExecutionContext = {
     toolId,
     toolName,
-    userId: context.userId,
-    agentId: context.agentId,
+    userId: (context as any)?.metadata?.userId || 'unknown',
+    agentId: (context as any)?.metadata?.agentId || 'unknown',
     sessionId: context.sessionId,
     metadata: {
       tool_type: 'knowledge_search_tool',
-      has_user_context: Boolean(context.userId),
+      has_user_context: Boolean((context as any)?.metadata?.userId || 'unknown'),
       search_type: input.searchType || 'unknown',
     },
   };
@@ -86,7 +86,7 @@ export const searchKnowledgeBaseTool = createTool({
         const { query, searchType, maxResults, minScore, categories, tags } = input;
 
         knowledgeLogger.info('Agent searching knowledge base', {
-          agent_id: context.agentId,
+          agent_id: (context as any)?.metadata?.agentId || 'unknown',
           query: query.substring(0, 100),
           search_type: searchType,
           max_results: maxResults,
@@ -100,7 +100,7 @@ export const searchKnowledgeBaseTool = createTool({
             minScore,
             categories,
             tags,
-            userId: context.userId,
+            userId: (context as any)?.metadata?.userId || 'unknown',
           },
           rerankResults: true,
         };
@@ -108,7 +108,7 @@ export const searchKnowledgeBaseTool = createTool({
         const searchResults = await knowledgeSearchService.search(searchQuery);
 
         knowledgeLogger.info('Knowledge base search completed for agent', {
-          agent_id: context.agentId,
+          agent_id: (context as any)?.metadata?.agentId || 'unknown',
           query: query.substring(0, 50),
           results_count: searchResults.totalResults,
           processing_time_ms: searchResults.processingTime,
@@ -161,7 +161,7 @@ export const getDocumentTool = createTool({
       tags: z.array(z.string()).optional(),
       status: z.string(),
       uploadedAt: z.string(),
-      metadata: z.record(z.any()),
+      metadata: z.record(z.string(), z.unknown()),
     }),
     chunks: z.array(z.object({
       id: z.string(),
@@ -176,13 +176,13 @@ export const getDocumentTool = createTool({
     const { documentId, includeChunks, maxChunks } = input;
 
     knowledgeLogger.info('Agent retrieving document', {
-      agent_id: context.agentId,
+      agent_id: (context as any)?.metadata?.agentId || 'unknown',
       document_id: documentId,
       include_chunks: includeChunks,
     });
 
     try {
-      const connectionManager = getConnectionManager();
+      const connectionManager = getConnectionPool();
 
       // Get document using pgvector database
       const documentQuery = `
@@ -198,7 +198,7 @@ export const getDocumentTool = createTool({
       const document = documentResult.rows[0];
 
       // Check user access
-      if (context.userId && document.upload_user_id !== context.userId) {
+      if ((context as any)?.metadata?.userId || 'unknown' && document.upload_user_id !== (context as any)?.metadata?.userId || 'unknown') {
         throw new Error('Access denied to document');
       }
 
@@ -229,7 +229,7 @@ export const getDocumentTool = createTool({
       }
 
       knowledgeLogger.info('Document retrieved for agent', {
-        agent_id: context.agentId,
+        agent_id: (context as any)?.metadata?.agentId || 'unknown',
         document_id: documentId,
         chunks_returned: chunks.length,
         total_chunks: chunksCount,
@@ -297,7 +297,7 @@ export const findSimilarDocumentsTool = createTool({
     const { documentId, query, maxResults, minScore, categories } = input;
 
     knowledgeLogger.info('Agent finding similar documents', {
-      agent_id: context.agentId,
+      agent_id: (context as any)?.metadata?.agentId || 'unknown',
       document_id: documentId,
       query: query?.substring(0, 50),
       max_results: maxResults,
@@ -308,7 +308,7 @@ export const findSimilarDocumentsTool = createTool({
 
       // If documentId is provided, get the document to create a search query
       if (documentId && !query) {
-        const connectionManager = getConnectionManager();
+        const connectionManager = getConnectionPool();
 
         const referenceDocQuery = `
           SELECT title, category, upload_user_id
@@ -324,7 +324,7 @@ export const findSimilarDocumentsTool = createTool({
         const referenceDoc = referenceDocResult.rows[0];
 
         // Check user access
-        if (context.userId && referenceDoc.upload_user_id !== context.userId) {
+        if ((context as any)?.metadata?.userId || 'unknown' && referenceDoc.upload_user_id !== (context as any)?.metadata?.userId || 'unknown') {
           throw new Error('Access denied to reference document');
         }
 
@@ -343,7 +343,7 @@ export const findSimilarDocumentsTool = createTool({
           maxResults: maxResults + (documentId ? 1 : 0), // Get one extra if we need to exclude reference doc
           minScore,
           categories,
-          userId: context.userId,
+          userId: (context as any)?.metadata?.userId || 'unknown',
         },
         rerankResults: true,
       });
@@ -364,7 +364,7 @@ export const findSimilarDocumentsTool = createTool({
         }));
 
       knowledgeLogger.info('Similar documents found for agent', {
-        agent_id: context.agentId,
+        agent_id: (context as any)?.metadata?.agentId || 'unknown',
         reference_document_id: documentId,
         similar_count: similarDocuments.length,
       });
@@ -413,13 +413,13 @@ export const getKnowledgeStatsTool = createTool({
     const { includeCategories, includeRecentActivity } = input;
 
     knowledgeLogger.info('Agent getting knowledge base statistics', {
-      agent_id: context.agentId,
+      agent_id: (context as any)?.metadata?.agentId || 'unknown',
       include_categories: includeCategories,
       include_recent_activity: includeRecentActivity,
     });
 
     try {
-      const connectionManager = getConnectionManager();
+      const connectionManager = getConnectionPool();
 
       // Get document counts by status using pgvector database
       const statusCountsQuery = `
@@ -493,7 +493,7 @@ export const getKnowledgeStatsTool = createTool({
       }
 
       knowledgeLogger.info('Knowledge base statistics retrieved for agent', {
-        agent_id: context.agentId,
+        agent_id: (context as any)?.metadata?.agentId || 'unknown',
         total_documents: statusCounts.total,
         completed_documents: statusCounts.completed,
       });

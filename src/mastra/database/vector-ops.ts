@@ -1,10 +1,12 @@
 /**
  * Vector Operations Service
  * Constitutional requirement for pgvector operations via postgres functions
+ * Updated to support configurable dimensions for Bedrock Titan v2 embeddings
  */
 
-import { getConnectionManager } from './connection.js';
+import { getConnectionPool } from '../config/consolidated-database.js';
 import { withErrorHandling } from '../observability/error-handling.js';
+import { getBedrockConfig } from '../config/bedrock-model.js';
 
 export interface VectorSearchResult {
   id: string;
@@ -25,6 +27,7 @@ export interface VectorSearchOptions {
   userFilter?: string;
   matchThreshold?: number;
   matchCount?: number;
+  expectedDimensions?: number; // Support configurable dimensions
 }
 
 export interface HybridSearchOptions {
@@ -32,10 +35,50 @@ export interface HybridSearchOptions {
   textWeight?: number;
   vectorWeight?: number;
   matchCount?: number;
+  expectedDimensions?: number; // Support configurable dimensions
 }
 
 export class VectorOperationsService {
-  private connectionManager = getConnectionManager();
+  private connectionManager = getConnectionPool();
+
+  /**
+   * Get expected dimensions from configuration or options
+   */
+  private getExpectedDimensions(options?: { expectedDimensions?: number }): number {
+    // Priority: 1. Explicit option, 2. Bedrock Titan config, 3. Default OpenAI (1536)
+    if (options?.expectedDimensions) {
+      return options.expectedDimensions;
+    }
+
+    try {
+      const bedrockConfig = getBedrockConfig();
+      return bedrockConfig.getTitanConfig().dimensions;
+    } catch {
+      // Fallback to OpenAI default if Bedrock config is not available
+      return 1536;
+    }
+  }
+
+  /**
+   * Validate embedding dimensions
+   */
+  private validateEmbeddingDimensions(embedding: number[], expectedDimensions: number): void {
+    if (embedding.length !== expectedDimensions) {
+      throw new Error(
+        `Embedding dimension mismatch: expected ${expectedDimensions}, got ${embedding.length}. ` +
+        `Supported dimensions: 256, 512, 1024 (Titan v2), 1536 (OpenAI)`
+      );
+    }
+
+    // Validate that dimensions are supported
+    const supportedDimensions = [256, 512, 1024, 1536];
+    if (!supportedDimensions.includes(expectedDimensions)) {
+      throw new Error(
+        `Unsupported embedding dimensions: ${expectedDimensions}. ` +
+        `Supported dimensions: ${supportedDimensions.join(', ')}`
+      );
+    }
+  }
 
   /**
    * Perform semantic search using pgvector functions
@@ -46,9 +89,8 @@ export class VectorOperationsService {
   ): Promise<VectorSearchResult[]> {
     return await withErrorHandling(
       async () => {
-        if (queryEmbedding.length !== 1536) {
-          throw new Error('Query embedding must be 1536 dimensions for pgvector compatibility');
-        }
+        const expectedDimensions = this.getExpectedDimensions(options);
+        this.validateEmbeddingDimensions(queryEmbedding, expectedDimensions);
 
         const embeddingString = `[${queryEmbedding.join(',')}]`;
 
@@ -88,6 +130,7 @@ export class VectorOperationsService {
           userFilter: options.userFilter,
           matchThreshold: options.matchThreshold,
           matchCount: options.matchCount,
+          dimensions: this.getExpectedDimensions(options),
         },
       },
       'medium'
@@ -104,9 +147,8 @@ export class VectorOperationsService {
   ): Promise<HybridSearchResult[]> {
     return await withErrorHandling(
       async () => {
-        if (queryEmbedding.length !== 1536) {
-          throw new Error('Query embedding must be 1536 dimensions for pgvector compatibility');
-        }
+        const expectedDimensions = this.getExpectedDimensions(options);
+        this.validateEmbeddingDimensions(queryEmbedding, expectedDimensions);
 
         const embeddingString = `[${queryEmbedding.join(',')}]`;
 
@@ -148,6 +190,7 @@ export class VectorOperationsService {
           textWeight: options.textWeight,
           vectorWeight: options.vectorWeight,
           matchCount: options.matchCount,
+          dimensions: this.getExpectedDimensions(options),
         },
       },
       'medium'
@@ -162,13 +205,13 @@ export class VectorOperationsService {
     content: string,
     embedding: number[],
     category: string = 'general',
-    metadata: Record<string, any> = {}
+    metadata: Record<string, any> = {},
+    expectedDimensions?: number
   ): Promise<string> {
     return await withErrorHandling(
       async () => {
-        if (embedding.length !== 1536) {
-          throw new Error('Embedding must be 1536 dimensions for pgvector compatibility');
-        }
+        const dimensions = expectedDimensions || this.getExpectedDimensions();
+        this.validateEmbeddingDimensions(embedding, dimensions);
 
         const embeddingString = `[${embedding.join(',')}]`;
 
@@ -191,7 +234,7 @@ export class VectorOperationsService {
         component: 'database',
         operation: 'store_user_memory',
         userId,
-        metadata: { category, contentLength: content.length },
+        metadata: { category, contentLength: content.length, dimensions: expectedDimensions || this.getExpectedDimensions() },
       },
       'medium'
     );
@@ -206,13 +249,13 @@ export class VectorOperationsService {
     category: string = 'general',
     accessLevel: 'public' | 'restricted' | 'admin' = 'public',
     createdBy?: string,
-    metadata: Record<string, any> = {}
+    metadata: Record<string, any> = {},
+    expectedDimensions?: number
   ): Promise<string> {
     return await withErrorHandling(
       async () => {
-        if (embedding.length !== 1536) {
-          throw new Error('Embedding must be 1536 dimensions for pgvector compatibility');
-        }
+        const dimensions = expectedDimensions || this.getExpectedDimensions();
+        this.validateEmbeddingDimensions(embedding, dimensions);
 
         const embeddingString = `[${embedding.join(',')}]`;
 
@@ -234,7 +277,7 @@ export class VectorOperationsService {
       {
         component: 'database',
         operation: 'store_global_memory',
-        metadata: { category, accessLevel, contentLength: content.length },
+        metadata: { category, accessLevel, contentLength: content.length, dimensions: expectedDimensions || this.getExpectedDimensions() },
       },
       'medium'
     );
@@ -248,13 +291,13 @@ export class VectorOperationsService {
     chunkIndex: number,
     content: string,
     embedding: number[],
-    chunkMetadata: Record<string, any> = {}
+    chunkMetadata: Record<string, any> = {},
+    expectedDimensions?: number
   ): Promise<string> {
     return await withErrorHandling(
       async () => {
-        if (embedding.length !== 1536) {
-          throw new Error('Embedding must be 1536 dimensions for pgvector compatibility');
-        }
+        const dimensions = expectedDimensions || this.getExpectedDimensions();
+        this.validateEmbeddingDimensions(embedding, dimensions);
 
         const embeddingString = `[${embedding.join(',')}]`;
 
@@ -276,10 +319,28 @@ export class VectorOperationsService {
       {
         component: 'database',
         operation: 'store_document_chunk',
-        metadata: { documentId, chunkIndex, contentLength: content.length },
+        metadata: { documentId, chunkIndex, contentLength: content.length, dimensions: expectedDimensions || this.getExpectedDimensions() },
       },
       'medium'
     );
+  }
+
+  /**
+   * Get current vector configuration information
+   */
+  getVectorConfig(): {
+    currentDimensions: number;
+    supportedDimensions: number[];
+    embeddingProvider: string;
+  } {
+    const currentDimensions = this.getExpectedDimensions();
+    const isBedrockTitan = currentDimensions !== 1536;
+
+    return {
+      currentDimensions,
+      supportedDimensions: [256, 512, 1024, 1536],
+      embeddingProvider: isBedrockTitan ? 'Bedrock Titan v2' : 'OpenAI (default)',
+    };
   }
 
   /**
@@ -289,6 +350,7 @@ export class VectorOperationsService {
     healthy: boolean;
     pgvectorVersion?: string;
     functionsAvailable?: boolean;
+    vectorConfig?: ReturnType<VectorOperationsService['getVectorConfig']>;
     error?: string;
   }> {
     try {
@@ -311,11 +373,13 @@ export class VectorOperationsService {
         healthy: Boolean(pgvectorVersion && functionsAvailable),
         pgvectorVersion,
         functionsAvailable,
+        vectorConfig: this.getVectorConfig(),
       };
     } catch (error) {
       return {
         healthy: false,
         error: error instanceof Error ? error.message : 'Unknown error',
+        vectorConfig: this.getVectorConfig(),
       };
     }
   }

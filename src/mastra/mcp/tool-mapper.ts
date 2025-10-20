@@ -459,7 +459,7 @@ export class MCPToolMapper {
    */
   private convertToZodSchema(inputSchema: any): z.ZodSchema {
     if (!inputSchema) {
-      return z.record(z.any()); // Accept any object if no schema provided
+      return z.record(z.string(), z.unknown()); // Accept any object if no schema provided
     }
 
     try {
@@ -502,7 +502,7 @@ export class MCPToolMapper {
       });
 
       // Fallback to accepting any object
-      return z.record(z.any());
+      return z.record(z.string(), z.unknown());
     }
   }
 
@@ -527,7 +527,7 @@ export class MCPToolMapper {
         const itemSchema = prop.items ? this.convertPropertyToZod(prop.items) : z.any();
         return z.array(itemSchema);
       case 'object':
-        return z.record(z.any()); // Simplified object handling
+        return z.record(z.string(), z.unknown()); // Simplified object handling
       default:
         return z.any();
     }

@@ -161,7 +161,7 @@ export const mcpGetDocumentTool = createTool({
       tags: z.array(z.string()).optional().describe('Document tags'),
       status: z.string().describe('Processing status'),
       uploadedAt: z.string().describe('Upload timestamp'),
-      metadata: z.record(z.any()).describe('Document metadata'),
+      metadata: z.record(z.string(), z.unknown()).describe('Document metadata'),
     }),
     chunks: z.array(z.object({
       id: z.string().describe('Chunk identifier'),

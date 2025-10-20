@@ -1,4 +1,4 @@
-import { Tool } from '@mastra/core';
+import { Tool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { mcpToolRegistry, ToolExecutionRequest } from '../mcp/registry.js';
 import { mcpClient } from '../mcp/client.js';

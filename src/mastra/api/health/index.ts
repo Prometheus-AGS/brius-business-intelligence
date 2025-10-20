@@ -5,11 +5,11 @@
 
 import { withErrorHandling } from '../../observability/error-handling.js';
 import { vectorStorage } from '../../memory/storage.js';
-import { getConnectionManager } from '../../database/connection.js';
-import { getVectorOpsService } from '../../database/vector-ops.js';
+import { checkDatabaseHealth, getVectorStore, getConnectionPool } from '../../config/consolidated-database.js';
 import { checkEmbeddingHealth } from '../../memory/embeddings.js';
 import { knowledgeSearchService } from '../../knowledge/search.js';
 import { rootLogger } from '../../observability/logger.js';
+import { getVectorOpsService } from '../../database/vector-ops.js';
 
 interface HealthCheckResult {
   healthy: boolean;
@@ -50,10 +50,10 @@ export async function performSystemHealthCheck(): Promise<SystemHealthResponse> 
       const components: HealthCheckResult[] = [];
 
       // 1. Database Connection Health
-      const connectionManager = getConnectionManager();
+      const connectionManager = getConnectionPool();
       const dbHealthStart = Date.now();
       try {
-        const poolStatus = connectionManager.getPoolStatus();
+        // Check pool status using available properties
         const testQuery = await connectionManager.query('SELECT 1 as test');
 
         components.push({
@@ -61,10 +61,9 @@ export async function performSystemHealthCheck(): Promise<SystemHealthResponse> 
           component: 'database_connection',
           latencyMs: Date.now() - dbHealthStart,
           details: {
-            pool_total: poolStatus.totalCount,
-            pool_idle: poolStatus.idleCount,
-            pool_waiting: poolStatus.waitingCount,
-            circuit_breaker_state: poolStatus.circuitBreakerState,
+            pool_total: connectionManager.totalCount,
+            pool_idle: connectionManager.idleCount,
+            pool_waiting: connectionManager.waitingCount,
           },
         });
       } catch (error) {
@@ -254,7 +253,7 @@ export async function performSystemHealthCheck(): Promise<SystemHealthResponse> 
       return response;
     },
     {
-      component: 'health_check',
+      component: 'system',
       operation: 'system_health_check',
     },
     'low'
@@ -266,7 +265,7 @@ export async function performSystemHealthCheck(): Promise<SystemHealthResponse> 
  */
 export async function performQuickHealthCheck(): Promise<{ healthy: boolean; timestamp: string }> {
   try {
-    const connectionManager = getConnectionManager();
+    const connectionManager = getConnectionPool();
     await connectionManager.query('SELECT 1');
 
     return {
@@ -326,7 +325,7 @@ export async function performPgvectorHealthCheck(): Promise<{
       };
     },
     {
-      component: 'health_check',
+      component: 'system',
       operation: 'pgvector_health_check',
     },
     'low'

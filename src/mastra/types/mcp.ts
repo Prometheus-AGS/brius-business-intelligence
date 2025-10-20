@@ -33,18 +33,18 @@ export const MCPToolSchema = z.object({
   description: z.string(),
   inputSchema: z.object({
     type: z.literal('object'),
-    properties: z.record(z.any()),
+    properties: z.record(z.string(), z.unknown()),
     required: z.array(z.string()).optional(),
   }),
   category: z.enum(['agent', 'workflow', 'knowledge', 'memory']).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const MCPToolCallRequestSchema = z.object({
   method: z.literal('tools/call'),
   params: z.object({
     name: z.string(),
-    arguments: z.record(z.any()),
+    arguments: z.record(z.string(), z.unknown()),
   }),
 });
 
@@ -88,25 +88,25 @@ export const MCPInitializeResponseSchema = z.object({
 export const MCPServerConfigSchema = z.object({
   command: z.string(),
   args: z.array(z.string()),
-  env: z.record(z.string()),
+  env: z.record(z.string(), z.string()),
   description: z.string().optional(),
 });
 
 export const MCPConfigSchema = z.object({
-  mcpServers: z.record(MCPServerConfigSchema),
+  mcpServers: z.record(z.string(), MCPServerConfigSchema),
 });
 
 export const MCPToolRegistryEntrySchema = z.object({
   id: z.string(),
   name: z.string(),
   description: z.string(),
-  input_schema: z.record(z.any()),
-  output_schema: z.record(z.any()).optional(),
+  input_schema: z.record(z.string(), z.unknown()),
+  output_schema: z.record(z.string(), z.unknown()).optional(),
   category: z.enum(['mcp', 'agent', 'knowledge', 'memory', 'workflow']),
   source: z.string().optional(),
   availability_status: z.enum(['available', 'unavailable', 'error']),
   last_health_check: z.string().datetime(),
-  metadata: z.record(z.any()),
+  metadata: z.record(z.string(), z.unknown()),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
 });
@@ -124,14 +124,14 @@ export const MCPClientConnectionSchema = z.object({
 // MCP Tool Execution Types
 export const MCPToolExecutionRequestSchema = z.object({
   tool_id: z.string(),
-  parameters: z.record(z.any()),
+  parameters: z.record(z.string(), z.unknown()),
   user_id: z.string().optional(),
   workflow_id: z.string().optional(),
   timeout_ms: z.number().int().positive().optional(),
 });
 
 export const MCPToolExecutionResponseSchema = z.object({
-  result: z.record(z.any()),
+  result: z.record(z.string(), z.unknown()),
   execution_time_ms: z.number().int().nonnegative(),
   status: z.enum(['success', 'error', 'timeout']),
   error_message: z.string().optional(),

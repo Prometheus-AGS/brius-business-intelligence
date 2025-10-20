@@ -62,7 +62,7 @@ export async function generateEmbeddings(
 
       return {
         embeddings: allEmbeddings,
-        model: env.BEDROCK_EMBEDDING_MODEL as 'amazon.titan-embed-text-v2',
+        model: env.BEDROCK_TITAN_MODEL_ID as 'amazon.titan-embed-text-v2',
       };
     },
     {
@@ -92,7 +92,7 @@ async function processBatch(
   };
 
   const command = new InvokeModelCommand({
-    modelId: env.BEDROCK_EMBEDDING_MODEL,
+    modelId: env.BEDROCK_TITAN_MODEL_ID,
     contentType: 'application/json',
     accept: 'application/json',
     body: JSON.stringify(requestPayload),

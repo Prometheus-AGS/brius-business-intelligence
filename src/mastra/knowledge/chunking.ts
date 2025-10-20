@@ -8,13 +8,13 @@ import { knowledgeLogger } from '../observability/logger.js';
  * Optimized for semantic search and retrieval augmented generation (RAG)
  */
 
-export type DocumentChunkingStrategy = 'paragraph' | 'sentence' | 'fixed-size' | 'semantic' | 'hybrid';
+export type DocumentChunkingStrategy = 'paragraph' | 'sentence' | 'fixed' | 'semantic' | 'hybrid';
 
 export interface ChunkingOptions {
   strategy: DocumentChunkingStrategy;
   chunkSize: number;
   overlap: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   preserveStructure?: boolean;
   minChunkSize?: number;
   maxChunkSize?: number;
@@ -50,10 +50,10 @@ export interface ChunkingResult {
 
 // Validation schemas
 const ChunkingOptionsSchema = z.object({
-  strategy: z.enum(['paragraph', 'sentence', 'fixed-size', 'semantic', 'hybrid']),
+  strategy: z.enum(['paragraph', 'sentence', 'fixed', 'semantic', 'hybrid']),
   chunkSize: z.number().min(50).max(8000).default(1000),
   overlap: z.number().min(0).max(1000).default(200),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   preserveStructure: z.boolean().default(true),
   minChunkSize: z.number().min(10).default(100),
   maxChunkSize: z.number().min(100).default(4000),
@@ -102,7 +102,7 @@ export class DocumentChunkingService {
         chunks = this.chunkBySentence(cleanedText, validOptions);
         break;
 
-      case 'fixed-size':
+      case 'fixed':
         chunks = this.chunkByFixedSize(cleanedText, validOptions);
         break;
 
@@ -576,9 +576,9 @@ export class DocumentChunkingService {
       metadata: {
         strategy: options.strategy,
         chunkType,
-        documentId: options.metadata?.documentId,
-        title: options.metadata?.title,
-        category: options.metadata?.category,
+        documentId: options.metadata?.documentId as string | undefined,
+        title: options.metadata?.title as string | undefined,
+        category: options.metadata?.category as string | undefined,
         ...options.metadata,
       },
     };

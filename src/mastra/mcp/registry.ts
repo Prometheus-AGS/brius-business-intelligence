@@ -17,8 +17,8 @@ export interface PlaygroundTool {
   category: string;
   namespace: string;
   serverId: string;
-  inputSchema: any; // JSON Schema for playground UI
-  outputSchema?: any;
+  inputSchema: unknown; // JSON Schema for playground UI
+  outputSchema?: unknown;
   examples: ToolExample[];
   metadata: {
     discoveredAt: string;
@@ -35,8 +35,8 @@ export interface PlaygroundTool {
 export interface ToolExample {
   name: string;
   description: string;
-  input: Record<string, any>;
-  expectedOutput?: any;
+  input: Record<string, unknown>;
+  expectedOutput?: unknown;
   metadata?: {
     difficulty: 'basic' | 'intermediate' | 'advanced';
     useCase: string;
@@ -57,7 +57,7 @@ export interface ToolExecutionResponse {
   id: string;
   toolId: string;
   success: boolean;
-  result?: any;
+  result?: unknown;
   error?: string;
   executionTime: number;
   timestamp: string;
@@ -597,9 +597,10 @@ export class MCPToolRegistry {
       case 'boolean':
         return complexity === 'basic' ? true : false;
 
-      case 'array':
+      case 'array': {
         const itemExample = prop.items ? this.generateExampleValue(prop.items, complexity) : 'item';
         return complexity === 'basic' ? [itemExample] : [itemExample, itemExample];
+      }
 
       case 'object':
         return { key: 'value' };

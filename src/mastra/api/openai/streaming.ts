@@ -220,7 +220,7 @@ export async function streamBusinessAnalysis(
     sections.push({
       title: 'Methodology',
       content: analysis.methodology,
-      priority: 'low' as const,
+      priority: 'medium' as const,
     });
   }
 
@@ -228,7 +228,7 @@ export async function streamBusinessAnalysis(
   sections.push({
     title: 'Analysis Confidence',
     content: `This analysis has a confidence score of ${(analysis.confidence * 100).toFixed(1)}% based on data quality, methodology robustness, and contextual factors.`,
-    priority: 'low' as const,
+    priority: 'medium' as const,
   });
 
   await streamStructuredContent(stream, sections, {

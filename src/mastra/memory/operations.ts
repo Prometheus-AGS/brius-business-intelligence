@@ -1,14 +1,14 @@
-import { SupabaseClient } from '@supabase/supabase-js';
-import { generateSingleEmbedding, cosineSimilarity } from './embeddings.js';
-import { getSupabaseClient } from '../config/database.js';
-import { UserMemory, GlobalMemory } from '../types/index.js';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { memoryLogger } from '../observability/logger.js';
-
-/**
- * User Memory Operations with Semantic Search
- * Implements user-scoped memory storage and retrieval using vector embeddings
- * Provides semantic search capabilities for contextual user information
- */
+import { vectorStorage } from './storage.js';
+import { generateSingleEmbedding } from './embeddings.js';
+import { getDrizzleDb, getVectorStore } from '../config/consolidated-database.js';
+import {
+  userMemories,
+  globalMemories,
+  type UserMemory as UserMemoryRow,
+  type GlobalMemory as GlobalMemoryRow,
+} from '../database/schema.js';
 
 export interface MemorySearchOptions {
   userId?: string;
@@ -22,10 +22,11 @@ export interface MemorySearchOptions {
 export interface MemorySearchResult {
   id: string;
   content: string;
-  similarity: number;
+  similarity_score: number;
   metadata?: Record<string, any>;
-  created_at: string;
+  created_at?: string;
   user_id?: string;
+  category?: string | null;
 }
 
 export interface StoreMemoryOptions {
@@ -40,23 +41,55 @@ export interface GlobalMemoryOptions {
   content: string;
   metadata?: Record<string, any>;
   category?: string;
+  createdBy?: string;
   importance?: 'low' | 'medium' | 'high';
 }
 
-/**
- * User Memory Operations Class
- */
-export class UserMemoryOperations {
-  private client: SupabaseClient;
+type StatisticSummary = {
+  total_memories: number;
+  categories: Record<string, number>;
+  importance_levels: Record<string, number>;
+  date_range: {
+    oldest: string | null;
+    newest: string | null;
+  };
+};
 
-  constructor(client: SupabaseClient = getSupabaseClient()) {
-    this.client = client;
+const connectionManager = getVectorStore();
+
+function mapUserMemory(row: UserMemoryRow) {
+  return {
+    id: row.id,
+    user_id: row.userId,
+    content: row.content,
+    category: row.category,
+    metadata: row.metadata ?? {},
+    created_at: row.createdAt?.toISOString?.() ?? new Date(row.createdAt).toISOString(),
+    updated_at: row.updatedAt?.toISOString?.() ?? new Date(row.updatedAt).toISOString(),
+  };
+}
+
+function mapGlobalMemory(row: GlobalMemoryRow) {
+  return {
+    id: row.id,
+    content: row.content,
+    category: row.category,
+    access_level: row.accessLevel,
+    metadata: row.metadata ?? {},
+    created_at: row.createdAt?.toISOString?.() ?? new Date(row.createdAt).toISOString(),
+    updated_at: row.updatedAt?.toISOString?.() ?? new Date(row.updatedAt).toISOString(),
+  };
+}
+
+export class UserMemoryOperations {
+  private get db() {
+    return getDrizzleDb();
   }
 
   /**
-   * Stores user memory with semantic embedding
+   * Stores user memory and its embedding using pgvector helpers.
    */
-  async store(options: StoreMemoryOptions): Promise<UserMemory> {
+  async store(options: StoreMemoryOptions) {
     const { userId, content, metadata = {}, category, importance = 'medium' } = options;
 
     memoryLogger.info('Storing user memory', {
@@ -66,51 +99,32 @@ export class UserMemoryOperations {
       importance,
     });
 
-    try {
-      // Generate embedding for semantic search
-      const embedding = await generateSingleEmbedding(content);
+    const normalizedMetadata = {
+      ...metadata,
+      importance,
+      stored_at: new Date().toISOString(),
+    };
 
-      // Prepare memory object
-      const memoryData = {
-        user_id: userId,
-        content,
-        embedding: JSON.stringify(embedding), // Store as JSON string for Supabase
-        metadata: {
-          ...metadata,
-          category,
-          importance,
-          created_by: 'user',
-        },
-      };
+    const memoryId = await vectorStorage.storeUserMemory(userId, content, {
+      category,
+      metadata: normalizedMetadata,
+    });
 
-      // Insert into database
-      const { data, error } = await this.client
-        .from('user_memories')
-        .insert([memoryData])
-        .select()
-        .single();
+    const [created] = await this.db
+      .select()
+      .from(userMemories)
+      .where(eq(userMemories.id, memoryId))
+      .limit(1);
 
-      if (error) {
-        memoryLogger.error('Failed to store user memory', error);
-        throw new Error(`Failed to store user memory: ${error.message}`);
-      }
-
-      memoryLogger.info('User memory stored successfully', {
-        user_id: userId,
-        memory_id: data.id,
-        content_length: content.length,
-      });
-
-      return data as UserMemory;
-
-    } catch (error) {
-      memoryLogger.error('User memory storage error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    if (!created) {
+      throw new Error('Failed to retrieve stored user memory');
     }
+
+    return mapUserMemory(created);
   }
 
   /**
-   * Searches user memories using semantic similarity
+   * Searches user memories using pgvector semantic search.
    */
   async search(options: MemorySearchOptions): Promise<MemorySearchResult[]> {
     const {
@@ -130,87 +144,40 @@ export class UserMemoryOperations {
       category,
     });
 
-    try {
-      // Generate query embedding
-      const queryEmbedding = await generateSingleEmbedding(query);
+    const results = await vectorStorage.searchUserMemories(userId ?? '', query, {
+      topK,
+      similarityThreshold,
+      category,
+    });
 
-      // Build query
-      let searchQuery = this.client
-        .from('user_memories')
-        .select('id, content, metadata, created_at, user_id, embedding');
-
-      // Filter by user if specified
-      if (userId) {
-        searchQuery = searchQuery.eq('user_id', userId);
-      }
-
-      // Filter by category if specified
-      if (category) {
-        searchQuery = searchQuery.contains('metadata', { category });
-      }
-
-      // Execute query
-      const { data: memories, error } = await searchQuery;
-
-      if (error) {
-        memoryLogger.error('Failed to search user memories', error);
-        throw new Error(`Failed to search user memories: ${error.message}`);
-      }
-
-      if (!memories || memories.length === 0) {
-        memoryLogger.info('No user memories found', { user_id: userId, query });
-        return [];
-      }
-
-      // Calculate similarities and rank results
-      const results: MemorySearchResult[] = [];
-
-      for (const memory of memories) {
-        try {
-          const memoryEmbedding = JSON.parse(memory.embedding);
-          const similarity = cosineSimilarity(queryEmbedding, memoryEmbedding);
-
-          if (similarity >= similarityThreshold) {
-            results.push({
-              id: memory.id,
-              content: memory.content,
-              similarity,
-              metadata: includeMetadata ? memory.metadata : undefined,
-              created_at: memory.created_at,
-              user_id: memory.user_id,
-            });
-          }
-        } catch (embeddingError) {
-          memoryLogger.warn('Failed to parse embedding for memory', {
-            memory_id: memory.id,
-            error: embeddingError,
-          });
-        }
-      }
-
-      // Sort by similarity and return top K
-      results.sort((a, b) => b.similarity - a.similarity);
-      const topResults = results.slice(0, topK);
-
-      memoryLogger.info('User memory search completed', {
-        user_id: userId,
-        query_length: query.length,
-        results_found: topResults.length,
-        avg_similarity: topResults.length > 0
-          ? topResults.reduce((sum, r) => sum + r.similarity, 0) / topResults.length
-          : 0,
-      });
-
-      return topResults;
-
-    } catch (error) {
-      memoryLogger.error('User memory search error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    if (results.length === 0) {
+      return [];
     }
+
+    const ids = results.map(result => result.id);
+    const rows = await this.db
+      .select()
+      .from(userMemories)
+      .where(inArray(userMemories.id, ids));
+
+    const rowMap = new Map(rows.map(row => [row.id, row]));
+
+    return results.map(result => {
+      const row = rowMap.get(result.id);
+      return {
+        id: result.id,
+        content: row?.content ?? result.content,
+        similarity_score: result.similarity,
+        metadata: includeMetadata ? { ...(row?.metadata ?? {}), ...(result.metadata ?? {}) } : undefined,
+        created_at: row ? mapUserMemory(row).created_at : undefined,
+        user_id: row?.userId ?? userId,
+        category: row?.category,
+      };
+    });
   }
 
   /**
-   * Retrieves all memories for a user
+   * Returns a paginated collection of user memories.
    */
   async getUserMemories(
     userId: string,
@@ -221,7 +188,7 @@ export class UserMemoryOperations {
       orderBy?: 'created_at' | 'updated_at';
       ascending?: boolean;
     } = {}
-  ): Promise<UserMemory[]> {
+  ) {
     const {
       limit = 50,
       offset = 0,
@@ -230,50 +197,26 @@ export class UserMemoryOperations {
       ascending = false,
     } = options;
 
-    memoryLogger.info('Retrieving user memories', {
-      user_id: userId,
-      limit,
-      offset,
-      category,
-      order_by: orderBy,
-    });
+    const orderColumn = orderBy === 'created_at' ? userMemories.createdAt : userMemories.updatedAt;
 
-    try {
-      let query = this.client
-        .from('user_memories')
-        .select('*')
-        .eq('user_id', userId);
+    let query = this.db
+      .select()
+      .from(userMemories)
+      .where(eq(userMemories.userId, userId))
+      .offset(offset)
+      .limit(limit)
+      .orderBy(ascending ? asc(orderColumn) : desc(orderColumn));
 
-      if (category) {
-        query = query.contains('metadata', { category });
-      }
-
-      query = query
-        .order(orderBy, { ascending })
-        .range(offset, offset + limit - 1);
-
-      const { data, error } = await query;
-
-      if (error) {
-        memoryLogger.error('Failed to retrieve user memories', error);
-        throw new Error(`Failed to retrieve user memories: ${error.message}`);
-      }
-
-      memoryLogger.info('User memories retrieved', {
-        user_id: userId,
-        count: data?.length || 0,
-      });
-
-      return data as UserMemory[] || [];
-
-    } catch (error) {
-      memoryLogger.error('User memory retrieval error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    if (category) {
+      query = query.where(and(eq(userMemories.userId, userId), eq(userMemories.category, category)));
     }
+
+    const rows = await query;
+    return rows.map(mapUserMemory);
   }
 
   /**
-   * Updates user memory content and re-generates embedding
+   * Updates user memory content/metadata and regenerates embeddings when needed.
    */
   async update(
     memoryId: string,
@@ -282,230 +225,143 @@ export class UserMemoryOperations {
       content?: string;
       metadata?: Record<string, any>;
     }
-  ): Promise<UserMemory> {
-    memoryLogger.info('Updating user memory', {
-      memory_id: memoryId,
-      user_id: userId,
-      has_content_update: Boolean(updates.content),
-      has_metadata_update: Boolean(updates.metadata),
-    });
+  ) {
+    const existingRows = await this.db
+      .select()
+      .from(userMemories)
+      .where(and(eq(userMemories.id, memoryId), eq(userMemories.userId, userId)))
+      .limit(1);
 
-    try {
-      const updateData: any = {};
-
-      // Update content and regenerate embedding if content changed
-      if (updates.content) {
-        updateData.content = updates.content;
-        updateData.embedding = JSON.stringify(await generateSingleEmbedding(updates.content));
-        updateData.updated_at = new Date().toISOString();
-      }
-
-      // Update metadata
-      if (updates.metadata) {
-        updateData.metadata = updates.metadata;
-        updateData.updated_at = new Date().toISOString();
-      }
-
-      const { data, error } = await this.client
-        .from('user_memories')
-        .update(updateData)
-        .eq('id', memoryId)
-        .eq('user_id', userId) // Ensure user can only update their own memories
-        .select()
-        .single();
-
-      if (error) {
-        memoryLogger.error('Failed to update user memory', error);
-        throw new Error(`Failed to update user memory: ${error.message}`);
-      }
-
-      memoryLogger.info('User memory updated successfully', {
-        memory_id: memoryId,
-        user_id: userId,
-      });
-
-      return data as UserMemory;
-
-    } catch (error) {
-      memoryLogger.error('User memory update error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    const existing = existingRows[0];
+    if (!existing) {
+      throw new Error('User memory not found or access denied');
     }
+
+    const updatedMetadata = updates.metadata
+      ? { ...existing.metadata, ...updates.metadata }
+      : existing.metadata;
+
+    const contentToUse = updates.content ?? existing.content;
+    const embedding = await generateSingleEmbedding(contentToUse);
+    const embeddingString = `[${embedding.join(',')}]`;
+
+    await connectionManager.query(
+      `
+        UPDATE user_memories
+        SET content = $1,
+            embedding = $2::vector,
+            metadata = $3::jsonb,
+            updated_at = NOW()
+        WHERE id = $4 AND user_id = $5
+      `,
+      [contentToUse, embeddingString, JSON.stringify(updatedMetadata ?? {}), memoryId, userId]
+    );
+
+    const [updated] = await this.db
+      .select()
+      .from(userMemories)
+      .where(eq(userMemories.id, memoryId))
+      .limit(1);
+
+    if (!updated) {
+      throw new Error('Failed to retrieve updated memory');
+    }
+
+    return mapUserMemory(updated);
   }
 
   /**
-   * Deletes user memory
+   * Deletes user memory entry.
    */
   async delete(memoryId: string, userId: string): Promise<void> {
-    memoryLogger.info('Deleting user memory', {
-      memory_id: memoryId,
-      user_id: userId,
-    });
-
-    try {
-      const { error } = await this.client
-        .from('user_memories')
-        .delete()
-        .eq('id', memoryId)
-        .eq('user_id', userId); // Ensure user can only delete their own memories
-
-      if (error) {
-        memoryLogger.error('Failed to delete user memory', error);
-        throw new Error(`Failed to delete user memory: ${error.message}`);
-      }
-
-      memoryLogger.info('User memory deleted successfully', {
-        memory_id: memoryId,
-        user_id: userId,
-      });
-
-    } catch (error) {
-      memoryLogger.error('User memory deletion error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
-    }
+    await connectionManager.query(
+      `
+        DELETE FROM user_memories
+        WHERE id = $1 AND user_id = $2
+      `,
+      [memoryId, userId]
+    );
   }
 
   /**
-   * Gets memory statistics for a user
+   * Aggregates statistics for user memories.
    */
-  async getMemoryStats(userId: string): Promise<{
-    total_memories: number;
-    categories: Record<string, number>;
-    importance_levels: Record<string, number>;
-    date_range: {
-      oldest: string | null;
-      newest: string | null;
-    };
-  }> {
-    memoryLogger.info('Getting memory statistics', { user_id: userId });
+  async getMemoryStats(userId: string): Promise<StatisticSummary> {
+    const rows = await this.db
+      .select({
+        id: userMemories.id,
+        metadata: userMemories.metadata,
+        createdAt: userMemories.createdAt,
+        category: userMemories.category,
+      })
+      .from(userMemories)
+      .where(eq(userMemories.userId, userId));
 
-    try {
-      const { data, error } = await this.client
-        .from('user_memories')
-        .select('metadata, created_at')
-        .eq('user_id', userId);
+    const categories: Record<string, number> = {};
+    const importanceLevels: Record<string, number> = {};
+    let oldest: string | null = null;
+    let newest: string | null = null;
 
-      if (error) {
-        memoryLogger.error('Failed to get memory statistics', error);
-        throw new Error(`Failed to get memory statistics: ${error.message}`);
-      }
+    for (const row of rows) {
+      const category = row.category ?? 'general';
+      categories[category] = (categories[category] ?? 0) + 1;
 
-      const memories = data || [];
-      const categories: Record<string, number> = {};
-      const importanceLevels: Record<string, number> = {};
+      const importance = (row.metadata?.importance as string) ?? 'medium';
+      importanceLevels[importance] = (importanceLevels[importance] ?? 0) + 1;
 
-      let oldest: string | null = null;
-      let newest: string | null = null;
-
-      for (const memory of memories) {
-        // Count categories
-        const category = memory.metadata?.category || 'uncategorized';
-        categories[category] = (categories[category] || 0) + 1;
-
-        // Count importance levels
-        const importance = memory.metadata?.importance || 'medium';
-        importanceLevels[importance] = (importanceLevels[importance] || 0) + 1;
-
-        // Track date range
-        if (!oldest || memory.created_at < oldest) {
-          oldest = memory.created_at;
-        }
-        if (!newest || memory.created_at > newest) {
-          newest = memory.created_at;
-        }
-      }
-
-      const stats = {
-        total_memories: memories.length,
-        categories,
-        importance_levels: importanceLevels,
-        date_range: {
-          oldest,
-          newest,
-        },
-      };
-
-      memoryLogger.info('Memory statistics retrieved', {
-        user_id: userId,
-        stats,
-      });
-
-      return stats;
-
-    } catch (error) {
-      memoryLogger.error('Memory statistics error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+      const createdAt = row.createdAt?.toISOString?.() ?? new Date(row.createdAt).toISOString();
+      if (!oldest || createdAt < oldest) oldest = createdAt;
+      if (!newest || createdAt > newest) newest = createdAt;
     }
+
+    return {
+      total_memories: rows.length,
+      categories,
+      importance_levels: importanceLevels,
+      date_range: {
+        oldest,
+        newest,
+      },
+    };
   }
 }
 
-/**
- * Global Memory Operations Class
- */
 export class GlobalMemoryOperations {
-  private client: SupabaseClient;
-
-  constructor(client: SupabaseClient = getSupabaseClient()) {
-    this.client = client;
+  private get db() {
+    return getDrizzleDb();
   }
 
-  /**
-   * Stores global memory with semantic embedding
-   */
-  async store(options: GlobalMemoryOptions): Promise<GlobalMemory> {
-    const { content, metadata = {}, category, importance = 'medium' } = options;
+  async store(options: GlobalMemoryOptions) {
+    const { content, metadata = {}, category, createdBy, importance = 'medium' } = options;
 
-    memoryLogger.info('Storing global memory', {
-      content_length: content.length,
-      category,
+    const normalizedMetadata = {
+      ...metadata,
       importance,
+      created_by: createdBy,
+      stored_at: new Date().toISOString(),
+    };
+
+    const memoryId = await vectorStorage.storeGlobalMemory(content, {
+      category,
+      metadata: normalizedMetadata,
+      accessLevel: metadata.access_level ?? 'public',
+      userId: createdBy,
     });
 
-    try {
-      // Generate embedding for semantic search
-      const embedding = await generateSingleEmbedding(content);
+    const [created] = await this.db
+      .select()
+      .from(globalMemories)
+      .where(eq(globalMemories.id, memoryId))
+      .limit(1);
 
-      // Prepare memory object
-      const memoryData = {
-        content,
-        embedding: JSON.stringify(embedding),
-        metadata: {
-          ...metadata,
-          category,
-          importance,
-          created_by: 'system',
-        },
-        category,
-      };
-
-      // Insert into database
-      const { data, error } = await this.client
-        .from('global_memories')
-        .insert([memoryData])
-        .select()
-        .single();
-
-      if (error) {
-        memoryLogger.error('Failed to store global memory', error);
-        throw new Error(`Failed to store global memory: ${error.message}`);
-      }
-
-      memoryLogger.info('Global memory stored successfully', {
-        memory_id: data.id,
-        content_length: content.length,
-      });
-
-      return data as GlobalMemory;
-
-    } catch (error) {
-      memoryLogger.error('Global memory storage error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    if (!created) {
+      throw new Error('Failed to retrieve stored global memory');
     }
+
+    return mapGlobalMemory(created);
   }
 
-  /**
-   * Searches global memories using semantic similarity
-   */
-  async search(options: Omit<MemorySearchOptions, 'userId'>): Promise<MemorySearchResult[]> {
+  async search(options: MemorySearchOptions): Promise<MemorySearchResult[]> {
     const {
       query,
       topK = 5,
@@ -514,88 +370,38 @@ export class GlobalMemoryOperations {
       includeMetadata = true,
     } = options;
 
-    memoryLogger.info('Searching global memories', {
-      query_length: query.length,
-      top_k: topK,
-      similarity_threshold: similarityThreshold,
+    const results = await vectorStorage.searchGlobalMemories(query, {
+      topK,
+      similarityThreshold,
+      accessLevel: 'public',
       category,
     });
 
-    try {
-      // Generate query embedding
-      const queryEmbedding = await generateSingleEmbedding(query);
-
-      // Build query
-      let searchQuery = this.client
-        .from('global_memories')
-        .select('id, content, metadata, created_at, category, embedding');
-
-      // Filter by category if specified
-      if (category) {
-        searchQuery = searchQuery.eq('category', category);
-      }
-
-      // Execute query
-      const { data: memories, error } = await searchQuery;
-
-      if (error) {
-        memoryLogger.error('Failed to search global memories', error);
-        throw new Error(`Failed to search global memories: ${error.message}`);
-      }
-
-      if (!memories || memories.length === 0) {
-        memoryLogger.info('No global memories found', { query });
-        return [];
-      }
-
-      // Calculate similarities and rank results
-      const results: MemorySearchResult[] = [];
-
-      for (const memory of memories) {
-        try {
-          const memoryEmbedding = JSON.parse(memory.embedding);
-          const similarity = cosineSimilarity(queryEmbedding, memoryEmbedding);
-
-          if (similarity >= similarityThreshold) {
-            results.push({
-              id: memory.id,
-              content: memory.content,
-              similarity,
-              metadata: includeMetadata ? memory.metadata : undefined,
-              created_at: memory.created_at,
-            });
-          }
-        } catch (embeddingError) {
-          memoryLogger.warn('Failed to parse embedding for global memory', {
-            memory_id: memory.id,
-            error: embeddingError,
-          });
-        }
-      }
-
-      // Sort by similarity and return top K
-      results.sort((a, b) => b.similarity - a.similarity);
-      const topResults = results.slice(0, topK);
-
-      memoryLogger.info('Global memory search completed', {
-        query_length: query.length,
-        results_found: topResults.length,
-        avg_similarity: topResults.length > 0
-          ? topResults.reduce((sum, r) => sum + r.similarity, 0) / topResults.length
-          : 0,
-      });
-
-      return topResults;
-
-    } catch (error) {
-      memoryLogger.error('Global memory search error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    if (results.length === 0) {
+      return [];
     }
+
+    const ids = results.map(result => result.id);
+    const rows = await this.db
+      .select()
+      .from(globalMemories)
+      .where(inArray(globalMemories.id, ids));
+
+    const rowMap = new Map(rows.map(row => [row.id, row]));
+
+    return results.map(result => {
+      const row = rowMap.get(result.id);
+      return {
+        id: result.id,
+        content: row?.content ?? result.content,
+        similarity_score: result.similarity,
+        metadata: includeMetadata ? { ...(row?.metadata ?? {}), ...(result.metadata ?? {}) } : undefined,
+        created_at: row ? mapGlobalMemory(row).created_at : undefined,
+        category: row?.category,
+      };
+    });
   }
 
-  /**
-   * Retrieves all global memories with pagination
-   */
   async getGlobalMemories(
     options: {
       limit?: number;
@@ -603,214 +409,155 @@ export class GlobalMemoryOperations {
       category?: string;
       orderBy?: 'created_at' | 'updated_at';
       ascending?: boolean;
+      accessLevel?: 'public' | 'restricted' | 'admin';
     } = {}
-  ): Promise<GlobalMemory[]> {
+  ) {
     const {
       limit = 50,
       offset = 0,
       category,
       orderBy = 'created_at',
       ascending = false,
+      accessLevel,
     } = options;
 
-    memoryLogger.info('Retrieving global memories', {
-      limit,
-      offset,
-      category,
-      order_by: orderBy,
-    });
+    const orderColumn = orderBy === 'created_at' ? globalMemories.createdAt : globalMemories.updatedAt;
 
-    try {
-      let query = this.client
-        .from('global_memories')
-        .select('*');
+    let query = this.db
+      .select()
+      .from(globalMemories)
+      .offset(offset)
+      .limit(limit)
+      .orderBy(ascending ? asc(orderColumn) : desc(orderColumn));
 
-      if (category) {
-        query = query.eq('category', category);
-      }
-
-      query = query
-        .order(orderBy, { ascending })
-        .range(offset, offset + limit - 1);
-
-      const { data, error } = await query;
-
-      if (error) {
-        memoryLogger.error('Failed to retrieve global memories', error);
-        throw new Error(`Failed to retrieve global memories: ${error.message}`);
-      }
-
-      memoryLogger.info('Global memories retrieved', {
-        count: data?.length || 0,
-      });
-
-      return data as GlobalMemory[] || [];
-
-    } catch (error) {
-      memoryLogger.error('Global memory retrieval error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    if (category) {
+      query = query.where(eq(globalMemories.category, category));
     }
+
+    if (accessLevel) {
+      query = query.where(
+        accessLevel === 'public'
+          ? eq(globalMemories.accessLevel, 'public')
+          : eq(globalMemories.accessLevel, accessLevel)
+      );
+    }
+
+    const rows = await query;
+    return rows.map(mapGlobalMemory);
   }
 
-  /**
-   * Updates global memory content and re-generates embedding
-   */
   async update(
     memoryId: string,
     updates: {
       content?: string;
       metadata?: Record<string, any>;
+      category?: string;
+      accessLevel?: 'public' | 'restricted' | 'admin';
     }
-  ): Promise<GlobalMemory> {
-    memoryLogger.info('Updating global memory', {
-      memory_id: memoryId,
-      has_content_update: Boolean(updates.content),
-      has_metadata_update: Boolean(updates.metadata),
-    });
+  ) {
+    const existingRows = await this.db
+      .select()
+      .from(globalMemories)
+      .where(eq(globalMemories.id, memoryId))
+      .limit(1);
 
-    try {
-      const updateData: any = {};
-
-      // Update content and regenerate embedding if content changed
-      if (updates.content) {
-        updateData.content = updates.content;
-        updateData.embedding = JSON.stringify(await generateSingleEmbedding(updates.content));
-        updateData.updated_at = new Date().toISOString();
-      }
-
-      // Update metadata
-      if (updates.metadata) {
-        updateData.metadata = updates.metadata;
-        updateData.updated_at = new Date().toISOString();
-      }
-
-      const { data, error } = await this.client
-        .from('global_memories')
-        .update(updateData)
-        .eq('id', memoryId)
-        .select()
-        .single();
-
-      if (error) {
-        memoryLogger.error('Failed to update global memory', error);
-        throw new Error(`Failed to update global memory: ${error.message}`);
-      }
-
-      memoryLogger.info('Global memory updated successfully', {
-        memory_id: memoryId,
-      });
-
-      return data as GlobalMemory;
-
-    } catch (error) {
-      memoryLogger.error('Global memory update error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+    const existing = existingRows[0];
+    if (!existing) {
+      throw new Error('Global memory not found');
     }
+
+    const contentToUse = updates.content ?? existing.content;
+    const metadataToUse = updates.metadata ? { ...existing.metadata, ...updates.metadata } : existing.metadata;
+    const categoryToUse = updates.category ?? existing.category;
+    const accessLevelToUse = updates.accessLevel ?? existing.accessLevel;
+
+    const embedding = await generateSingleEmbedding(contentToUse);
+    const embeddingString = `[${embedding.join(',')}]`;
+
+    await connectionManager.query(
+      `
+        UPDATE global_memories
+        SET content = $1,
+            embedding = $2::vector,
+            metadata = $3::jsonb,
+            category = $4,
+            access_level = $5,
+            updated_at = NOW()
+        WHERE id = $6
+      `,
+      [
+        contentToUse,
+        embeddingString,
+        JSON.stringify(metadataToUse ?? {}),
+        categoryToUse,
+        accessLevelToUse,
+        memoryId,
+      ]
+    );
+
+    const [updated] = await this.db
+      .select()
+      .from(globalMemories)
+      .where(eq(globalMemories.id, memoryId))
+      .limit(1);
+
+    if (!updated) {
+      throw new Error('Failed to retrieve updated global memory');
+    }
+
+    return mapGlobalMemory(updated);
   }
 
-  /**
-   * Deletes global memory
-   */
   async delete(memoryId: string): Promise<void> {
-    memoryLogger.info('Deleting global memory', {
-      memory_id: memoryId,
-    });
+    await refreshDatabaseClient();
 
-    try {
-      const { error } = await this.client
-        .from('global_memories')
-        .delete()
-        .eq('id', memoryId);
-
-      if (error) {
-        memoryLogger.error('Failed to delete global memory', error);
-        throw new Error(`Failed to delete global memory: ${error.message}`);
-      }
-
-      memoryLogger.info('Global memory deleted successfully', {
-        memory_id: memoryId,
-      });
-
-    } catch (error) {
-      memoryLogger.error('Global memory deletion error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
-    }
+    await connectionManager.query(
+      `
+        DELETE FROM global_memories
+        WHERE id = $1
+      `,
+      [memoryId]
+    );
   }
 
-  /**
-   * Gets global memory statistics
-   */
-  async getMemoryStats(): Promise<{
-    total_memories: number;
-    categories: Record<string, number>;
-    importance_levels: Record<string, number>;
-    date_range: {
-      oldest: string | null;
-      newest: string | null;
-    };
-  }> {
-    memoryLogger.info('Getting global memory statistics');
+  async getMemoryStats(): Promise<StatisticSummary> {
+    const rows = await this.db
+      .select({
+        id: globalMemories.id,
+        metadata: globalMemories.metadata,
+        createdAt: globalMemories.createdAt,
+        category: globalMemories.category,
+      })
+      .from(globalMemories);
 
-    try {
-      const { data, error } = await this.client
-        .from('global_memories')
-        .select('metadata, created_at, category');
+    const categories: Record<string, number> = {};
+    const importanceLevels: Record<string, number> = {};
+    let oldest: string | null = null;
+    let newest: string | null = null;
 
-      if (error) {
-        memoryLogger.error('Failed to get global memory statistics', error);
-        throw new Error(`Failed to get global memory statistics: ${error.message}`);
-      }
+    for (const row of rows) {
+      const category = row.category ?? 'general';
+      categories[category] = (categories[category] ?? 0) + 1;
 
-      const memories = data || [];
-      const categories: Record<string, number> = {};
-      const importanceLevels: Record<string, number> = {};
+      const importance = (row.metadata?.importance as string) ?? 'medium';
+      importanceLevels[importance] = (importanceLevels[importance] ?? 0) + 1;
 
-      let oldest: string | null = null;
-      let newest: string | null = null;
-
-      for (const memory of memories) {
-        // Count categories
-        const category = memory.category || memory.metadata?.category || 'uncategorized';
-        categories[category] = (categories[category] || 0) + 1;
-
-        // Count importance levels
-        const importance = memory.metadata?.importance || 'medium';
-        importanceLevels[importance] = (importanceLevels[importance] || 0) + 1;
-
-        // Track date range
-        if (!oldest || memory.created_at < oldest) {
-          oldest = memory.created_at;
-        }
-        if (!newest || memory.created_at > newest) {
-          newest = memory.created_at;
-        }
-      }
-
-      const stats = {
-        total_memories: memories.length,
-        categories,
-        importance_levels: importanceLevels,
-        date_range: {
-          oldest,
-          newest,
-        },
-      };
-
-      memoryLogger.info('Global memory statistics retrieved', {
-        stats,
-      });
-
-      return stats;
-
-    } catch (error) {
-      memoryLogger.error('Global memory statistics error', error instanceof Error ? error : new Error(String(error)));
-      throw error;
+      const createdAt = row.createdAt?.toISOString?.() ?? new Date(row.createdAt).toISOString();
+      if (!oldest || createdAt < oldest) oldest = createdAt;
+      if (!newest || createdAt > newest) newest = createdAt;
     }
+
+    return {
+      total_memories: rows.length,
+      categories,
+      importance_levels: importanceLevels,
+      date_range: {
+        oldest,
+        newest,
+      },
+    };
   }
 }
 
-// Export singleton instances
 export const userMemoryOps = new UserMemoryOperations();
 export const globalMemoryOps = new GlobalMemoryOperations();
-
-// Classes are already exported above in their definitions
