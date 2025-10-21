@@ -3,6 +3,7 @@ import { getVectorStore, getConnectionPool } from '../config/consolidated-databa
 import { withErrorHandling } from '../observability/error-handling.js';
 import { generateSingleEmbedding } from '../memory/embeddings.js';
 import { knowledgeLogger } from '../observability/logger.js';
+import { ExtendedVectorService } from './vector-service.js';
 
 /**
  * Semantic Search Operations
@@ -111,7 +112,7 @@ const SearchQuerySchema = z.object({
 export class KnowledgeSearchService {
   private searchHistory: Array<{ query: string; timestamp: Date; responseTime: number }> = [];
   private maxHistorySize = 1000;
-  private vectorOps = getVectorStore();
+  private vectorOps = new ExtendedVectorService(getVectorStore());
   private connectionManager = getConnectionPool();
 
   /**

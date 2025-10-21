@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, sql, count } from 'drizzle-orm';
 import { getDrizzleDb } from '../config/consolidated-database.js';
 import {
   documentChunks,
@@ -78,7 +78,7 @@ export async function listDocuments(filters: DocumentFilters, db = getDrizzleDb(
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
   const total = await db
-    .select({ count: knowledgeDocuments.id })
+    .select({ count: count() })
     .from(knowledgeDocuments)
     .where(whereClause)
     .then(rows => Number(rows[0]?.count ?? 0));
@@ -127,7 +127,7 @@ export async function getDocumentById(documentId: string, db = getDrizzleDb()): 
 
 export async function countDocumentChunks(documentId: string, db = getDrizzleDb()): Promise<number> {
   const result = await db
-    .select({ count: documentChunks.id })
+    .select({ count: count() })
     .from(documentChunks)
     .where(eq(documentChunks.documentId, documentId));
 
@@ -247,7 +247,7 @@ export async function getDocumentChunks(
   const offset = (page - 1) * limit;
 
   const totalResult = await db
-    .select({ count: documentChunks.id })
+    .select({ count: count() })
     .from(documentChunks)
     .where(eq(documentChunks.documentId, documentId));
 
@@ -319,7 +319,7 @@ export async function processDocument(
       content: chunk.content,
       embedding: JSON.stringify(embeddings[index]),
       chunkMetadata: {
-        ...(chunk.metadata ?? {}),
+        ...(chunk.metadata || {}),
         chunk_strategy: chunkStrategy,
       },
     }));

@@ -15,6 +15,7 @@ import { documentProcessingQueue } from '../../knowledge/processing-queue.js';
 import { knowledgeLogger } from '../../observability/logger.js';
 import { KnowledgeSearchService } from '../../knowledge/search.js';
 import { UploadRequestSchema, decodeContent } from '../../knowledge/upload.js';
+import type { DocumentChunkingStrategy } from '../../knowledge/chunking.js';
 
 const searchService = new KnowledgeSearchService();
 
@@ -266,9 +267,9 @@ export function getKnowledgeRoutes() {
                 await documentProcessingQueue.enqueue({
                   documentId,
                   metadata: {
-                    chunkStrategy: operationData?.chunkStrategy,
-                    chunkSize: operationData?.chunkSize,
-                    overlap: operationData?.overlap,
+                    chunkStrategy: operationData?.chunkStrategy as DocumentChunkingStrategy | undefined,
+                    chunkSize: operationData?.chunkSize as number | undefined,
+                    overlap: operationData?.overlap as number | undefined,
                   },
                 });
                 results.push({ documentId, status: 'reprocess_enqueued' });

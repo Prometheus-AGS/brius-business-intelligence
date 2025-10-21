@@ -324,7 +324,7 @@ export function createStreamHeartbeat(
         (stream as any).res?.write?.(heartbeat);
       }
     } catch (error) {
-      mcpLogger.debug('Heartbeat failed, stopping interval', error);
+      mcpLogger.debug('Heartbeat failed, stopping interval', error instanceof Error ? { error: error.message } : { error: String(error) });
       clearInterval(interval);
     }
   }, intervalMs);

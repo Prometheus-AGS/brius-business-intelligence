@@ -1,8 +1,8 @@
 import { Agent } from '@mastra/core/agent';
-import { openai } from '@ai-sdk/openai';
 import type { ChatCompletionRequest } from '../types/index.js';
 import { getMemoryStore } from '../config/consolidated-database.js';
 import { ensureMcpToolsLoaded, getSharedToolMap } from './shared-tools.js';
+import { chatModel } from '../config/llm-config.js';
 
 const DEFAULT_AGENT_INSTRUCTIONS = `You are a helpful business assistant.
 - Provide concise, actionable answers when the request is straightforward.
@@ -13,7 +13,7 @@ export const defaultAgent = new Agent({
   name: 'default-agent',
   description: 'Handles lightweight business questions and routing.',
   instructions: DEFAULT_AGENT_INSTRUCTIONS,
-  model: openai('gpt-4o-mini'),
+  model: chatModel, // Using Bedrock Claude 4 Sonnet via direct provider
   tools: async () => getSharedToolMap(),
   memory: getMemoryStore(),
 });

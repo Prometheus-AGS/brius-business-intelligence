@@ -8,7 +8,7 @@ import { relations } from 'drizzle-orm';
 
 // Custom vector type definition for pgvector
 // Note: This will need to be properly typed when drizzle-orm adds official pgvector support
-const vector = (name: string, config: { dimensions: number }) => {
+const vector = (name: string, _config: { dimensions: number }) => {
   return text(name); // Temporary text representation
 };
 
@@ -146,7 +146,7 @@ export const chunksRelations = relations(documentChunks, ({ one }) => ({
   }),
 }));
 
-export const knowledgeSettingsRelations = relations(knowledgeSettings, ({ }) => ({}));
+export const knowledgeSettingsRelations = relations(knowledgeSettings, () => ({}));
 
 export const processingJobsRelations = relations(knowledgeProcessingJobs, ({ one }) => ({
   document: one(knowledgeDocuments, {

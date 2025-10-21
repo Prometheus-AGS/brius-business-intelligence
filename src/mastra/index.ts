@@ -15,7 +15,7 @@ import {
 } from './config/consolidated-database.js';
 import { businessIntelligenceAgent, executeBusinessIntelligenceAgent } from './agents/business-intelligence.js';
 import { defaultAgent, executeDefaultAgent } from './agents/default.js';
-import { ensureMcpToolsLoaded, getSharedToolMap, getBedrockTools, getToolCounts } from './agents/shared-tools.js';
+import { ensureMcpToolsLoaded, getSharedToolMap, getBedrockTools, getToolCounts, getAllAvailableTools } from './agents/shared-tools.js';
 import { intentClassifierWorkflow } from './workflows/intent-classifier.js';
 import { defaultOrchestrationWorkflow, executeDefaultOrchestration } from './workflows/default-orchestration.js';
 import { businessIntelligenceOrchestrationWorkflow, executeBusinessIntelligenceOrchestration } from './workflows/business-intelligence-orchestration.js';
@@ -23,6 +23,8 @@ import { planningWorkflow, executePlanning } from './workflows/planning.js';
 import { rootLogger } from './observability/logger.js';
 import { getKnowledgeRoutes } from './api/routes/knowledge.js';
 import { documentProcessingQueue } from './knowledge/processing-queue.js';
+import { mcpToolRegistry } from './mcp/registry.js';
+import { getMCPToolRegistrationManager } from './tools/mcp-registry.js';
 
 // Add global error handlers to prevent crashes
 process.on('uncaughtException', (error) => {
@@ -72,59 +74,149 @@ const observabilityConfig = env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY
       default: { enabled: true },
     };
 
-// Create Mastra instance with proper error handling
-export const mastra = new Mastra({
-  agents: {
-    [businessIntelligenceAgent.name]: businessIntelligenceAgent,
-    [defaultAgent.name]: defaultAgent,
-  },
-  workflows: {
-    [intentClassifierWorkflow.id]: intentClassifierWorkflow,
-    [defaultOrchestrationWorkflow.id]: defaultOrchestrationWorkflow,
-    [businessIntelligenceOrchestrationWorkflow.id]: businessIntelligenceOrchestrationWorkflow,
-    [planningWorkflow.id]: planningWorkflow,
-  },
-  storage: getPostgresStore(),
-  vectors: { primary: getVectorStore() },
-  logger: new PinoLogger({
-    name: 'brius-bi-system',
-    level: (process.env.MASTRA_LOG_LEVEL as any) || 'info',
-  }),
-  telemetry: {
-    enabled: false,
-  },
-  observability: observabilityConfig,
-  server: {
-    apiRoutes: [
-      ...getKnowledgeRoutes(),
-    ],
-  },
-});
+// Initialize all tools BEFORE creating Mastra instance
+async function initializeAllTools() {
+  try {
+    rootLogger.info('🔥 STARTING TOOL INITIALIZATION BEFORE MASTRA CREATION');
 
-// Initialize database and tools with proper error handling
+    // Initialize MCP registry first
+    rootLogger.info('🔥 INITIALIZING MCP REGISTRY');
+    await mcpToolRegistry.initialize();
+    rootLogger.info('✅ MCP registry initialized successfully');
+
+    // Initialize MCP tool registration manager
+    rootLogger.info('🔥 INITIALIZING MCP TOOL REGISTRATION MANAGER');
+    const mcpToolRegistrationManager = getMCPToolRegistrationManager();
+    if (mcpToolRegistrationManager) {
+      await mcpToolRegistrationManager.initialize();
+      rootLogger.info('✅ MCP tool registration manager initialized successfully');
+    } else {
+      rootLogger.warn('⚠️ MCP tool registration manager not available');
+    }
+
+    // Load MCP tools into shared tools system
+    rootLogger.info('🔥 LOADING MCP TOOLS INTO SHARED SYSTEM');
+    await ensureMcpToolsLoaded();
+
+    const toolCounts = getToolCounts();
+    const allTools = getAllAvailableTools();
+
+    rootLogger.info('✅ All tools loaded successfully before Mastra creation', {
+      ...toolCounts,
+      total_available_tools: allTools.length,
+      tool_ids: allTools.map(t => t.id).slice(0, 10), // Log first 10 tool IDs
+    });
+
+    return allTools;
+
+  } catch (error) {
+    rootLogger.error('❌ Tool initialization failed', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
+    // Continue with fallback tools
+    try {
+      const toolCounts = getToolCounts();
+      const allTools = getAllAvailableTools();
+      rootLogger.warn('⚠️ Continuing with fallback tools only', {
+        ...toolCounts,
+        total_available_tools: allTools.length,
+      });
+      return allTools;
+    } catch (fallbackError) {
+      rootLogger.error('❌ Even fallback tools failed', {
+        error: fallbackError instanceof Error ? fallbackError.message : fallbackError,
+      });
+      return [];
+    }
+  }
+}
+
+// Global variable to hold the Mastra instance
+let mastraInstance: Mastra | null = null;
+
+// Create Mastra instance with proper agent configuration
+async function createMastraInstance() {
+  if (mastraInstance) {
+    return mastraInstance;
+  }
+
+  try {
+    // Load all tools BEFORE creating agents
+    const allTools = await initializeAllTools();
+
+    rootLogger.info('🔥 CREATING MASTRA INSTANCE WITH AGENT TOOL CONFIGURATION', {
+      tool_count: allTools.length,
+      tool_ids: allTools.map(t => t.id).slice(0, 10), // Log first 10 tool IDs
+    });
+
+    // Note: Tools are configured at the AGENT level, not Mastra level
+    // The agents are already configured with their tools in their respective files
+    // The shared tool system will provide the aggregated tools to agents when they execute
+
+    mastraInstance = new Mastra({
+      agents: {
+        [businessIntelligenceAgent.name]: businessIntelligenceAgent,
+        [defaultAgent.name]: defaultAgent,
+      },
+      workflows: {
+        [intentClassifierWorkflow.id]: intentClassifierWorkflow,
+        [defaultOrchestrationWorkflow.id]: defaultOrchestrationWorkflow,
+        [businessIntelligenceOrchestrationWorkflow.id]: businessIntelligenceOrchestrationWorkflow,
+        [planningWorkflow.id]: planningWorkflow,
+      },
+      // No 'tools' property - tools are configured at agent level
+      storage: getPostgresStore(),
+      vectors: { primary: getVectorStore() },
+      logger: new PinoLogger({
+        name: 'brius-bi-system',
+        level: (process.env.MASTRA_LOG_LEVEL as any) || 'info',
+      }),
+      telemetry: {
+        enabled: false,
+      },
+      observability: observabilityConfig,
+      server: {
+        apiRoutes: [
+          ...getKnowledgeRoutes(),
+        ],
+      },
+    });
+
+    rootLogger.info('✅ MASTRA INSTANCE CREATED SUCCESSFULLY', {
+      agent_count: Object.keys(mastraInstance.getAgents()).length,
+      workflow_count: Object.keys(mastraInstance.getWorkflows()).length,
+      available_tool_count: allTools.length,
+    });
+
+    return mastraInstance;
+  } catch (error) {
+    rootLogger.error('❌ MASTRA INSTANCE CREATION FAILED', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    throw error;
+  }
+}
+
+// Export a promise that resolves to the Mastra instance
+export const mastra = await createMastraInstance();
+
+// Initialize remaining services after Mastra is created
 async function initializeServices() {
   try {
-    rootLogger.info('Initializing Mastra services');
-    
+    rootLogger.info('🔥 INITIALIZING REMAINING MASTRA SERVICES');
+
     // Add delay to ensure database is ready
     await new Promise(resolve => setTimeout(resolve, 2000));
-    
+
     // Initialize vector indexes with error handling
     try {
       await ensureVectorIndexes();
-      rootLogger.info('Vector indexes initialized successfully');
+      rootLogger.info('✅ Vector indexes initialized successfully');
     } catch (error) {
-      rootLogger.warn('Vector index initialization failed, continuing without vectors', {
-        error: error instanceof Error ? error.message : error
-      });
-    }
-
-    // Initialize MCP tools with error handling
-    try {
-      await ensureMcpToolsLoaded();
-      rootLogger.info('MCP tools loaded successfully', getToolCounts());
-    } catch (error) {
-      rootLogger.warn('MCP tools initialization failed, continuing without MCP tools', {
+      rootLogger.warn('⚠️ Vector index initialization failed, continuing without vectors', {
         error: error instanceof Error ? error.message : error
       });
     }
@@ -132,16 +224,16 @@ async function initializeServices() {
     // Start background services
     try {
       documentProcessingQueue.start();
-      rootLogger.info('Document processing queue started');
+      rootLogger.info('✅ Document processing queue started');
     } catch (error) {
-      rootLogger.warn('Document processing queue failed to start', {
+      rootLogger.warn('⚠️ Document processing queue failed to start', {
         error: error instanceof Error ? error.message : error
       });
     }
 
-    rootLogger.info('Mastra services initialization completed');
+    rootLogger.info('🎉 MASTRA SERVICES INITIALIZATION COMPLETED');
   } catch (error) {
-    rootLogger.error('Critical service initialization error', {
+    rootLogger.error('💥 CRITICAL SERVICE INITIALIZATION ERROR', {
       error: error instanceof Error ? error.message : error,
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -150,7 +242,7 @@ async function initializeServices() {
 
 // Start initialization
 initializeServices().catch((error) => {
-  rootLogger.error('Fatal service initialization error:', error);
+  rootLogger.error('💥 FATAL SERVICE INITIALIZATION ERROR:', error);
 });
 
 // Configuration and health info
@@ -173,23 +265,27 @@ export const healthInfo = {
   features: {
     agent_count: Object.keys(mastra.getAgents()).length,
     workflow_count: Object.keys(mastra.getWorkflows()).length,
+    available_tool_count: getAllAvailableTools().length, // TOTAL AVAILABLE TOOLS
     langfuse_enabled: Boolean(env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY),
     memory_enabled: true,
     knowledge_base_enabled: true,
     bedrock_llm_enabled: true,
+    mcp_enabled: true,
   },
   agents: Object.keys(mastra.getAgents()),
   workflows: Object.keys(mastra.getWorkflows()),
-  tools: Object.keys(getSharedToolMap()),
+  // Tools are configured at agent level, not Mastra level
+  shared_tools: Object.keys(getSharedToolMap()), // TOOLS IN SHARED TOOL MAP
   tool_counts: getToolCounts(),
 };
 
-rootLogger.info('Mastra initialized', {
+rootLogger.info('🚀 MASTRA INITIALIZED', {
   service: healthInfo.service,
   environment: healthInfo.environment,
   agents: healthInfo.agents,
   workflows: healthInfo.workflows,
   port: config.port,
+  tool_counts: healthInfo.tool_counts,
 });
 
 // Legacy exports for backward compatibility
@@ -208,4 +304,7 @@ export const workflows = {
 // Function exports
 export { executeBusinessIntelligenceAgent, executeDefaultAgent };
 export { executeDefaultOrchestration, executeBusinessIntelligenceOrchestration, executePlanning };
-export { getSharedToolMap, getBedrockTools, getToolCounts };
+export { ensureMcpToolsLoaded, getSharedToolMap, getBedrockTools, getToolCounts, getAllAvailableTools };
+
+// MCP exports for external access
+export { mcpToolRegistry, getMCPToolRegistrationManager };

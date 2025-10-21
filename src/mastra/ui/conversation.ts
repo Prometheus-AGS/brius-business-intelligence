@@ -301,7 +301,7 @@ export async function createConversation(req: Request, res: Response): Promise<v
     const conversation = await conversationStore.createConversation(
       req.user.userId,
       sessionId,
-      initialContext
+      initialContext as Partial<ConversationContext> | undefined
     );
 
     // Store conversation creation in user memory for context

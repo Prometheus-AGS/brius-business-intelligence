@@ -2,7 +2,13 @@ import { z } from 'zod';
 import { createTool } from '@mastra/core/tools';
 import { rootLogger } from '../../observability/logger.js';
 import { MCPTracer } from '../../observability/langfuse.js';
-import { knowledgeSearchTools } from '../../tools/knowledge-search.js';
+import {
+  knowledgeSearchTools,
+  searchKnowledgeBaseTool,
+  getDocumentTool,
+  findSimilarDocumentsTool,
+  getKnowledgeStatsTool
+} from '../../tools/knowledge-search.js';
 
 /**
  * Knowledge Base MCP Tools for External Client Access
@@ -80,11 +86,15 @@ export const mcpKnowledgeSearchTool = createTool({
     searchType: z.string().describe('Search type used'),
     processingTime: z.number().describe('Search processing time in milliseconds'),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any, options?: any) => {
+    const input = context;
     const tracer = new MCPTracer('knowledge-search', `search-${Date.now()}`, {
-      query: input.query.substring(0, 100),
-      searchType: input.searchType,
-      userId: input.userId || context.userId,
+      userId: input.userId,
+      input: input,
+      metadata: {
+        query: input.query.substring(0, 100),
+        searchType: input.searchType,
+      },
     });
 
     try {
@@ -92,27 +102,15 @@ export const mcpKnowledgeSearchTool = createTool({
         query: input.query.substring(0, 100),
         search_type: input.searchType,
         max_results: input.maxResults,
-        user_id: input.userId || context.userId,
+        user_id: input.userId,
       });
 
       // Use the existing knowledge search tool
-      const searchTool = knowledgeSearchTools.find(tool => tool.id === 'search-knowledge-base');
-      if (!searchTool) {
-        throw new Error('Knowledge search tool not available');
-      }
-
-      const result = await searchTool.execute({
-        context: {
+      const result = await searchKnowledgeBaseTool.execute({
+        ...input,
+        metadata: {
           agentId: 'mcp-client',
-          userId: input.userId || context.userId || 'anonymous',
-        },
-        input: {
-          query: input.query,
-          searchType: input.searchType,
-          maxResults: input.maxResults,
-          minScore: input.minScore,
-          categories: input.categories,
-          tags: input.tags,
+          userId: input.userId || 'anonymous',
         },
       });
 
@@ -130,7 +128,19 @@ export const mcpKnowledgeSearchTool = createTool({
         processing_time_ms: result.processingTime,
       });
 
-      return result;
+      // Transform result to match MCP schema (convert chunk_index to chunkIndex)
+      const transformedResult = {
+        ...result,
+        results: result.results.map((item: any) => ({
+          ...item,
+          chunk: {
+            ...item.chunk,
+            chunkIndex: item.chunk.chunk_index,
+          },
+        })),
+      };
+
+      return transformedResult;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -172,10 +182,15 @@ export const mcpGetDocumentTool = createTool({
     })).optional().describe('Document chunks'),
     chunksCount: z.number().describe('Total number of chunks in document'),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any, options?: any) => {
+    const input = context;
     const tracer = new MCPTracer('get-document', `get-${Date.now()}`, {
-      documentId: input.documentId,
-      includeChunks: input.includeChunks,
+      userId: input.userId,
+      input: input,
+      metadata: {
+        documentId: input.documentId,
+        includeChunks: input.includeChunks,
+      },
     });
 
     try {
@@ -186,20 +201,11 @@ export const mcpGetDocumentTool = createTool({
       });
 
       // Use the existing get document tool
-      const getDocTool = knowledgeSearchTools.find(tool => tool.id === 'get-document');
-      if (!getDocTool) {
-        throw new Error('Get document tool not available');
-      }
-
-      const result = await getDocTool.execute({
-        context: {
+      const result = await getDocumentTool.execute({
+        ...input,
+        metadata: {
           agentId: 'mcp-client',
-          userId: context.userId || 'anonymous',
-        },
-        input: {
-          documentId: input.documentId,
-          includeChunks: input.includeChunks,
-          maxChunks: input.maxChunks,
+          userId: input.userId || 'anonymous',
         },
       });
 
@@ -257,11 +263,16 @@ export const mcpFindSimilarDocumentsTool = createTool({
     totalSimilar: z.number().describe('Total number of similar documents found'),
     referenceQuery: z.string().describe('Query used for similarity search'),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any, options?: any) => {
+    const input = context;
     const tracer = new MCPTracer('find-similar-documents', `similar-${Date.now()}`, {
-      documentId: input.documentId,
-      query: input.query?.substring(0, 100),
-      maxResults: input.maxResults,
+      userId: input.userId,
+      input: input,
+      metadata: {
+        documentId: input.documentId,
+        query: input.query?.substring(0, 100),
+        maxResults: input.maxResults,
+      },
     });
 
     try {
@@ -273,22 +284,11 @@ export const mcpFindSimilarDocumentsTool = createTool({
       });
 
       // Use the existing find similar documents tool
-      const similarTool = knowledgeSearchTools.find(tool => tool.id === 'find-similar-documents');
-      if (!similarTool) {
-        throw new Error('Find similar documents tool not available');
-      }
-
-      const result = await similarTool.execute({
-        context: {
+      const result = await findSimilarDocumentsTool.execute({
+        ...input,
+        metadata: {
           agentId: 'mcp-client',
-          userId: context.userId || 'anonymous',
-        },
-        input: {
-          documentId: input.documentId,
-          query: input.query,
-          maxResults: input.maxResults,
-          minScore: input.minScore,
-          categories: input.categories,
+          userId: input.userId || 'anonymous',
         },
       });
 
@@ -348,10 +348,15 @@ export const mcpKnowledgeStatsTool = createTool({
       successRate: z.number().describe('Processing success rate (0-1)'),
     }).optional().describe('Processing system status'),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any, options?: any) => {
+    const input = context;
     const tracer = new MCPTracer('knowledge-stats', `stats-${Date.now()}`, {
-      includeCategories: input.includeCategories,
-      includeRecentActivity: input.includeRecentActivity,
+      userId: input.userId,
+      input: input,
+      metadata: {
+        includeCategories: input.includeCategories,
+        includeRecentActivity: input.includeRecentActivity,
+      },
     });
 
     try {
@@ -362,19 +367,11 @@ export const mcpKnowledgeStatsTool = createTool({
       });
 
       // Use the existing knowledge stats tool
-      const statsTool = knowledgeSearchTools.find(tool => tool.id === 'get-knowledge-stats');
-      if (!statsTool) {
-        throw new Error('Knowledge stats tool not available');
-      }
-
-      const result = await statsTool.execute({
-        context: {
+      const result = await getKnowledgeStatsTool.execute({
+        ...input,
+        metadata: {
           agentId: 'mcp-client',
-          userId: context.userId || 'anonymous',
-        },
-        input: {
-          includeCategories: input.includeCategories,
-          includeRecentActivity: input.includeRecentActivity,
+          userId: input.userId || 'anonymous',
         },
       });
 
@@ -470,11 +467,15 @@ export const mcpDocumentUploadStatusTool = createTool({
       failed: z.number().describe('Number of failed documents'),
     }).describe('Processing statistics'),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any, options?: any) => {
+    const input = context;
     const tracer = new MCPTracer('document-upload-status', `status-${Date.now()}`, {
-      documentId: input.documentId,
       userId: input.userId,
-      status: input.status,
+      input: input,
+      metadata: {
+        documentId: input.documentId,
+        status: input.status,
+      },
     });
 
     try {
@@ -608,11 +609,16 @@ export const mcpKnowledgeHealthCheckTool = createTool({
     }),
     recommendations: z.array(z.string()).describe('Recommended actions to improve health'),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any, options?: any) => {
+    const input = context;
     const tracer = new MCPTracer('knowledge-health-check', `health-${Date.now()}`, {
-      includeSearchTest: input.includeSearchTest,
-      includeProcessingTest: input.includeProcessingTest,
-      includeDataIntegrity: input.includeDataIntegrity,
+      userId: input.userId,
+      input: input,
+      metadata: {
+        includeSearchTest: input.includeSearchTest,
+        includeProcessingTest: input.includeProcessingTest,
+        includeDataIntegrity: input.includeDataIntegrity,
+      },
     });
 
     try {
@@ -628,7 +634,7 @@ export const mcpKnowledgeHealthCheckTool = createTool({
       const recommendations: string[] = [];
 
       // Search system health check
-      let searchHealth = { status: 'healthy' as const, responseTime: 0, issues: [] as string[] };
+      let searchHealth: { status: 'healthy' | 'degraded' | 'unhealthy', responseTime: number, issues: string[] } = { status: 'healthy', responseTime: 0, issues: [] };
       if (input.includeSearchTest) {
         try {
           const searchStart = Date.now();
@@ -651,7 +657,7 @@ export const mcpKnowledgeHealthCheckTool = createTool({
       }
 
       // Processing system health check
-      let processingHealth = { status: 'healthy' as const, queueHealth: true, activeJobs: 0, issues: [] as string[] };
+      let processingHealth: { status: 'healthy' | 'degraded' | 'unhealthy', queueHealth: boolean, activeJobs: number, issues: string[] } = { status: 'healthy', queueHealth: true, activeJobs: 0, issues: [] };
       if (input.includeProcessingTest) {
         try {
           // Mock processing health - in production, check actual processing queue
@@ -674,7 +680,7 @@ export const mcpKnowledgeHealthCheckTool = createTool({
       }
 
       // Storage system health check
-      let storageHealth = { status: 'healthy' as const, connectivity: true, diskSpace: 85, issues: [] as string[] };
+      let storageHealth: { status: 'healthy' | 'degraded' | 'unhealthy', connectivity: boolean, diskSpace: number, issues: string[] } = { status: 'healthy', connectivity: true, diskSpace: 85, issues: [] };
       try {
         // Mock storage health - in production, check actual database and storage
         storageHealth.connectivity = true;
@@ -702,7 +708,7 @@ export const mcpKnowledgeHealthCheckTool = createTool({
       // Data integrity check (optional)
       let dataIntegrityHealth;
       if (input.includeDataIntegrity) {
-        dataIntegrityHealth = { status: 'healthy' as const, orphanedChunks: 0, inconsistencies: 0, issues: [] as string[] };
+        dataIntegrityHealth = { status: 'healthy' as 'healthy' | 'degraded' | 'unhealthy', orphanedChunks: 0, inconsistencies: 0, issues: [] as string[] };
         try {
           // Mock data integrity check - in production, perform actual integrity checks
           dataIntegrityHealth.orphanedChunks = Math.floor(Math.random() * 5);

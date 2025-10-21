@@ -1,7 +1,3 @@
-import dotenv from 'dotenv';
-import { PostgresStore } from '@mastra/pg';
-import { PgVector } from '@mastra/pg';
-import { Memory } from '@mastra/memory';
 import { Mastra } from '@mastra/core/mastra';
 import { DefaultExporter } from '@mastra/core/ai-tracing';
 import { PinoLogger } from '@mastra/loggers';
@@ -111,7 +107,7 @@ export class StartupManager {
         retries: 3,
         execute: async () => {
           const memoryStore = getMemoryStore();
-          rootLogger.info('Memory store initialized', {
+          rootLogger.info('Memory store initialized: ' + memoryStore, {
             working_memory: true,
             semantic_recall: false, // Disabled until embedder configured
           });

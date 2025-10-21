@@ -134,7 +134,24 @@ export class CircuitBreaker {
       lastFailureTime: this.lastFailureTime,
       nextAttemptTime: this.nextAttemptTime,
       isHealthy: this.state === 'closed',
-      timeUntilRetry: this.nextAttemptTime 
+      timeUntilRetry: this.nextAttemptTime
+        ? Math.max(0, this.nextAttemptTime.getTime() - Date.now())
+        : 0,
+    };
+  }
+
+  /**
+   * Get health information for monitoring
+   */
+  getHealthInfo() {
+    return {
+      healthy: this.state === 'closed',
+      state: this.state,
+      failureCount: this.failureCount,
+      successCount: this.successCount,
+      lastFailureTime: this.lastFailureTime,
+      nextAttemptTime: this.nextAttemptTime,
+      timeUntilRetry: this.nextAttemptTime
         ? Math.max(0, this.nextAttemptTime.getTime() - Date.now())
         : 0,
     };
@@ -201,4 +218,39 @@ export class CircuitBreaker {
       lastStateChange: this.lastFailureTime?.toISOString(),
     };
   }
+}
+
+/**
+ * Circuit breaker registry for managing multiple circuit breakers
+ */
+export class CircuitBreakerRegistry {
+  private breakers = new Map<string, CircuitBreaker>();
+
+  getBreaker(name: string, config: CircuitBreakerConfig): CircuitBreaker {
+    if (!this.breakers.has(name)) {
+      this.breakers.set(name, new CircuitBreaker(config));
+    }
+    return this.breakers.get(name)!;
+  }
+
+  reset(name?: string): void {
+    if (name) {
+      this.breakers.get(name)?.reset();
+    } else {
+      for (const breaker of this.breakers.values()) {
+        breaker.reset();
+      }
+    }
+  }
+
+  getAllBreakers(): Map<string, CircuitBreaker> {
+    return new Map(this.breakers);
+  }
+}
+
+// Global registry instance
+const globalRegistry = new CircuitBreakerRegistry();
+
+export function getCircuitBreakerRegistry(): CircuitBreakerRegistry {
+  return globalRegistry;
 }

@@ -82,19 +82,21 @@ const AgentExecutionOutputSchema = z.object({
 /**
  * Create agent execution tool wrapper
  */
-function createAgentExecutionTool(agentId: string, agent: any) {
+function createAgentExecutionTool(agentId: string, _agent: any) {
   return createTool({
     id: `execute-agent-${agentId}`,
     description: `Execute ${agentId} agent with business intelligence capabilities. This agent can process complex queries, analyze data, and provide insights using available tools and knowledge.`,
     inputSchema: AgentExecutionInputSchema,
     outputSchema: AgentExecutionOutputSchema,
-    execute: async ({ context, input }) => {
+    execute: async (input: any) => {
       const startTime = Date.now();
       const tracer = new MCPTracer(`agent-execution-${agentId}`, `exec-${Date.now()}`, {
-        agentId,
-        userId: input.context?.userId,
-        sessionId: input.context?.sessionId,
-        prompt: input.prompt.substring(0, 100),
+        metadata: {
+          agentId,
+          userId: input.context?.userId,
+          sessionId: input.context?.sessionId,
+          prompt: input.prompt.substring(0, 100),
+        },
       });
 
       try {
@@ -110,9 +112,9 @@ function createAgentExecutionTool(agentId: string, agent: any) {
 
         // Prepare execution context
         const executionContext: AgentExecutionContext = {
-          userId: execContext.userId || context.userId || 'mcp-client',
-          sessionId: execContext.sessionId || context.sessionId || `mcp-${Date.now()}`,
-          traceId: execContext.traceId || tracer.getTraceId(),
+          userId: execContext.userId || 'mcp-client',
+          sessionId: execContext.sessionId || `mcp-${Date.now()}`,
+          traceId: execContext.traceId || `trace-${Date.now()}`,
           metadata: {
             source: 'mcp-client',
             ...execContext.metadata,
@@ -123,25 +125,15 @@ function createAgentExecutionTool(agentId: string, agent: any) {
         let result;
         if (agentId === 'business-intelligence-agent') {
           const { executeBusinessIntelligenceAgent } = await import('../../agents/business-intelligence.js');
-          result = await executeBusinessIntelligenceAgent({
-            query: prompt,
-            user_id: executionContext.userId!,
-            context: executionContext.metadata || {},
-          }, {
-            traceId: executionContext.traceId,
-            userId: executionContext.userId,
-            maxSteps: options.maxSteps,
-            timeout: options.timeout,
+          result = await executeBusinessIntelligenceAgent(prompt, {
+            userId: executionContext.userId!,
+            conversationId: executionContext.sessionId,
           });
         } else if (agentId === 'default-agent') {
           const { executeDefaultAgent } = await import('../../agents/default.js');
-          result = await executeDefaultAgent({
-            query: prompt,
-            user_id: executionContext.userId!,
-            context: executionContext.metadata || {},
-          }, {
-            traceId: executionContext.traceId,
-            userId: executionContext.userId,
+          result = await executeDefaultAgent(prompt, {
+            userId: executionContext.userId!,
+            conversationId: executionContext.sessionId,
           });
         } else {
           throw new Error(`Agent execution not implemented for ${agentId}`);
@@ -158,9 +150,9 @@ function createAgentExecutionTool(agentId: string, agent: any) {
             userId: executionContext.userId,
             sessionId: executionContext.sessionId,
             traceId: executionContext.traceId,
-            tokensUsed: result.tokens_used || undefined,
-            steps: result.steps || undefined,
-            tools_used: result.tools_used || undefined,
+            tokensUsed: (result as any).tokens_used || undefined,
+            steps: Array.isArray((result as any).steps) ? (result as any).steps.length : undefined,
+            tools_used: (result as any).tools_used || undefined,
           },
         };
 
@@ -259,7 +251,7 @@ function createAgentInfoTool(agentId: string, agent: any) {
         successRate: z.number().describe('Success rate (0-1)'),
       }).optional(),
     }),
-    execute: async ({ context, input }) => {
+    execute: async (input: any) => {
       try {
         const { includeTools, includeCapabilities, includeMetrics } = input;
 
@@ -279,15 +271,15 @@ function createAgentInfoTool(agentId: string, agent: any) {
 
         if (includeCapabilities) {
           agentInfo.capabilities = {
-            memory: Boolean(agent.memory),
-            tools: Boolean(agent.tools?.length),
+            memory: Boolean((agent as any).memory),
+            tools: Boolean((agent as any).tools?.length),
             streaming: true,
             multiStep: true,
           };
         }
 
-        if (includeTools && agent.tools) {
-          agentInfo.tools = agent.tools.map((tool: any) => ({
+        if (includeTools && (agent as any).tools) {
+          agentInfo.tools = (agent as any).tools.map((tool: any) => ({
             id: tool.id,
             name: tool.name || tool.id,
             description: tool.description || `Tool for ${tool.id}`,
@@ -295,10 +287,10 @@ function createAgentInfoTool(agentId: string, agent: any) {
           }));
         }
 
-        if (agent.model) {
+        if ((agent as any).model) {
           agentInfo.model = {
-            provider: agent.model.provider,
-            modelId: agent.model.modelId,
+            provider: (agent as any).model.provider,
+            modelId: (agent as any).model.modelId,
           };
         }
 
@@ -352,7 +344,7 @@ export const listAgentsTool = createTool({
     })),
     totalCount: z.number().describe('Total number of agents'),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (input: any) => {
     try {
       const { includeInactive, category, detailed } = input;
 
@@ -363,7 +355,7 @@ export const listAgentsTool = createTool({
       });
 
       const agentList = Object.entries(agents)
-        .filter(([agentId, agent]) => {
+        .filter(([agentId, _agent]) => {
           if (category === 'intelligence' && !agentId.includes('intelligence')) return false;
           if (category === 'default' && !agentId.includes('default')) return false;
           return true;
@@ -379,11 +371,11 @@ export const listAgentsTool = createTool({
 
           if (detailed) {
             agentInfo.capabilities = {
-              memory: Boolean(agent.memory),
-              tools: Boolean(agent.tools?.length),
+              memory: Boolean((agent as any).memory),
+              tools: Boolean((agent as any).tools?.length),
               streaming: true,
             };
-            agentInfo.toolsCount = agent.tools?.length || 0;
+            agentInfo.toolsCount = (agent as any).tools?.length || 0;
           }
 
           return agentInfo;
@@ -446,9 +438,9 @@ export const agentHealthCheckTool = createTool({
       averageResponseTime: z.number().describe('Average response time'),
     }),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any) => {
     try {
-      const { agentId, includeTools, timeout } = input;
+      const { agentId, includeTools, timeout } = context;
       const startTime = Date.now();
 
       rootLogger.info('MCP agent health check started', {
@@ -461,7 +453,7 @@ export const agentHealthCheckTool = createTool({
       const results = [];
 
       for (const id of agentsToCheck) {
-        const agent = agents[id];
+        const agent = agents[id as keyof typeof agents];
         if (!agent) {
           results.push({
             agentId: id,
@@ -483,17 +475,17 @@ export const agentHealthCheckTool = createTool({
         const issues = [];
         const checks = {
           initialization: true,
-          model: Boolean(agent.model),
-          tools: Boolean(agent.tools?.length),
-          memory: Boolean(agent.memory),
+          model: Boolean((agent as any).model),
+          tools: Boolean((agent as any).tools?.length),
+          memory: Boolean((agent as any).memory),
         };
 
         // Basic health checks
-        if (!agent.name) {
+        if (!(agent as any).name) {
           issues.push('Agent name not configured');
         }
 
-        if (!agent.instructions) {
+        if (!(agent as any).instructions) {
           issues.push('Agent instructions not configured');
         }
 
@@ -506,7 +498,7 @@ export const agentHealthCheckTool = createTool({
         }
 
         const responseTime = Date.now() - checkStartTime;
-        const status = issues.length === 0 ? 'healthy' : issues.length < 3 ? 'warning' : 'unhealthy';
+        const status: 'healthy' | 'unhealthy' | 'warning' = issues.length === 0 ? 'healthy' : issues.length < 3 ? 'warning' : 'unhealthy';
 
         results.push({
           agentId: id,

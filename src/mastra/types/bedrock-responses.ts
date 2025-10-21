@@ -27,6 +27,9 @@ export interface ClaudeTextGenerationResponse {
   /** Request processing time (ms) */
   processingTimeMs: number;
 
+  /** Response latency in milliseconds */
+  latencyMs?: number;
+
   /** Langfuse trace ID for monitoring */
   traceId?: string;
 
@@ -38,8 +41,14 @@ export interface ClaudeStreamResponse {
   /** Whether this is a streaming chunk */
   isStreaming: true;
 
+  /** Type of the streaming event */
+  type?: string;
+
   /** Delta content for this chunk */
-  delta: string;
+  delta?: any;
+
+  /** Message content for this chunk */
+  message?: any;
 
   /** Whether this is the final chunk */
   isComplete: boolean;
@@ -49,6 +58,9 @@ export interface ClaudeStreamResponse {
 
   /** Stop reason (only in final chunk) */
   stopReason?: ClaudeTextGenerationResponse['stopReason'];
+
+  /** Timestamp of this chunk */
+  timestamp?: string;
 }
 
 /**
@@ -72,6 +84,12 @@ export interface TitanEmbeddingResponse {
 
   /** Request processing time (ms) */
   processingTimeMs: number;
+
+  /** Response latency in milliseconds */
+  latencyMs?: number;
+
+  /** Input token count */
+  inputTokenCount?: number;
 
   /** Langfuse trace ID for monitoring */
   traceId?: string;

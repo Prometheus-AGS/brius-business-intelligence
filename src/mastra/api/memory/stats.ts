@@ -4,7 +4,6 @@ import { userMemoryOps, globalMemoryOps } from '../../memory/operations.js';
 import { vectorStorage } from '../../memory/storage.js';
 import { apiLogger } from '../../observability/logger.js';
 import { APITracer } from '../../observability/tracing.js';
-import { getVectorOpsService } from '../../database/vector-ops.js';
 
 /**
  * Memory Statistics API Endpoints

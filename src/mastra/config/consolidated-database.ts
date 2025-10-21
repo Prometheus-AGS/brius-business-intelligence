@@ -11,7 +11,6 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
 import { env } from './environment.js';
 import * as schema from '../database/schema.js';
-import { generateSingleEmbedding } from '../memory/embeddings.js';
 
 // Single database connection configuration following Mastra patterns
 const DATABASE_CONFIG = {
@@ -131,8 +130,9 @@ export function getConnectionPool(): Pool {
     });
 
     connectionPool.on('connect', (client) => {
+      // Only log initial connection, not every client acquisition
       console.log('Database client connected successfully');
-      
+
       // Set up client-level error handling
       client.on('error', (clientErr) => {
         console.error('Database client error (non-fatal):', clientErr.message);
@@ -140,13 +140,14 @@ export function getConnectionPool(): Pool {
       });
     });
 
-    connectionPool.on('acquire', (client) => {
-      console.log('Database client acquired from pool');
-    });
+    // Remove excessive logging that was causing output spam
+    // connectionPool.on('acquire', (client) => {
+    //   console.log('Database client acquired from pool: ', client);
+    // });
 
-    connectionPool.on('remove', (client) => {
-      console.log('Database client removed from pool');
-    });
+    // connectionPool.on('remove', (client) => {
+    //   console.log('Database client removed from pool: ', client);
+    // });
   }
   return connectionPool;
 }
@@ -208,17 +209,19 @@ export async function checkDatabaseHealth(): Promise<{
     // Basic connectivity check through connection pool
     const pool = getConnectionPool();
     const testResult = await pool.query('SELECT version()');
+    console.log('Database connectivity check:', testResult.rows[0].version);
 
     // Check pgvector extension
     const vectorResult = await pool.query(
       "SELECT extversion FROM pg_extension WHERE extname = 'vector'"
     );
+    console.log('pgvector extension version:', vectorResult.rows[0].extversion);
 
     return {
       healthy: true,
       pgvectorVersion: vectorResult?.rows?.[0]?.extversion || 'unknown',
       connectionDetails: {
-        storage: Boolean(postgresStore),
+        storage: Boolean(storage),
         vector: Boolean(vectorStore),
         memory: Boolean(memoryStore),
       },

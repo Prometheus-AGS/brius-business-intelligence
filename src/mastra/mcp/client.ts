@@ -151,11 +151,41 @@ export class MCPClient extends EventEmitter {
     }
 
     try {
-      // Ensure process is running
-      let processInfo = mcpProcessManager.getProcessInfo(serverId);
-      if (!processInfo || processInfo.status !== 'running') {
-        mcpLogger.info('Starting MCP server process', { server_id: serverId });
-        processInfo = await mcpProcessManager.startServer(serverId, configPath);
+      let processInfo: ProcessInfo;
+
+      // Check if this is a remote HTTP streaming server
+      const isRemoteServer = config.command === 'remote-http' || config.metadata?.serverType === 'remote-http';
+      
+      if (isRemoteServer) {
+        mcpLogger.info('Connecting to remote MCP server', {
+          server_id: serverId,
+          url: config.args[0] || config.metadata?.url
+        });
+        
+        // Create a mock process info for remote servers
+        processInfo = {
+          serverId,
+          config,
+          process: null as any, // No actual process for remote servers
+          pid: undefined,
+          status: 'running',
+          startedAt: new Date(),
+          lastRestartAt: undefined,
+          restartCount: 0,
+          healthStatus: 'healthy',
+          lastHealthCheck: new Date(),
+          errorCount: 0,
+          lastError: undefined,
+        };
+      } else {
+        // Ensure local process is running
+        const existingProcessInfo = mcpProcessManager.getProcessInfo(serverId);
+        if (!existingProcessInfo || existingProcessInfo.status !== 'running') {
+          mcpLogger.info('Starting MCP server process', { server_id: serverId });
+          processInfo = await mcpProcessManager.startServer(serverId, configPath);
+        } else {
+          processInfo = existingProcessInfo;
+        }
       }
 
       // Create connection object
@@ -507,36 +537,63 @@ export class MCPClient extends EventEmitter {
   private async establishConnection(connection: MCPConnection): Promise<void> {
     mcpLogger.debug('Establishing MCP connection', { server_id: connection.serverId });
 
-    // Wait for process to be ready
-    let attempts = 0;
-    const maxAttempts = Math.ceil(this.options.connectionTimeout / 1000);
+    // Check if this is a remote HTTP server
+    const isRemoteServer = connection.config.command === 'remote-http' || connection.config.metadata?.serverType === 'remote-http';
 
-    while (attempts < maxAttempts) {
-      const processInfo = mcpProcessManager.getProcessInfo(connection.serverId);
-      if (processInfo && processInfo.status === 'running' && processInfo.healthStatus === 'healthy') {
-        break;
+    if (isRemoteServer) {
+      // For remote HTTP servers, perform a basic connectivity check
+      const url = connection.config.args[0] || connection.config.metadata?.url;
+      if (!url) {
+        throw new Error(`Remote HTTP server URL not found for ${connection.serverId}`);
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      attempts++;
-    }
+      mcpLogger.debug('Testing remote HTTP server connectivity', {
+        server_id: connection.serverId,
+        url: url
+      });
 
-    if (attempts >= maxAttempts) {
-      throw new Error(`Connection timeout: MCP server not ready (${connection.serverId})`);
-    }
+      // For remote HTTP servers, we'll assume connectivity for now
+      // TODO: Implement proper HTTP connectivity test and MCP protocol handshake
+      mcpLogger.debug('Remote HTTP server connection assumed successful', {
+        server_id: connection.serverId,
+        url: url
+      });
 
-    // TODO: Implement actual MCP protocol handshake
-    // This would involve:
-    // 1. Opening stdio pipes to the process
-    // 2. Sending initialization message
-    // 3. Handling protocol negotiation
-    // 4. Setting up message handling
+    } else {
+      // For local stdio servers, wait for process to be ready
+      let attempts = 0;
+      const maxAttempts = Math.ceil(this.options.connectionTimeout / 1000);
+
+      while (attempts < maxAttempts) {
+        const processInfo = mcpProcessManager.getProcessInfo(connection.serverId);
+        if (processInfo && processInfo.status === 'running' && processInfo.healthStatus === 'healthy') {
+          break;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+      }
+
+      if (attempts >= maxAttempts) {
+        throw new Error(`Connection timeout: MCP server not ready (${connection.serverId})`);
+      }
+
+      // TODO: Implement actual MCP protocol handshake for stdio servers
+      // This would involve:
+      // 1. Opening stdio pipes to the process
+      // 2. Sending initialization message
+      // 3. Handling protocol negotiation
+      // 4. Setting up message handling
+    }
 
     connection.status = 'connected';
     connection.connectedAt = new Date();
     connection.lastActivity = new Date();
 
-    mcpLogger.debug('MCP connection established', { server_id: connection.serverId });
+    mcpLogger.debug('MCP connection established', {
+      server_id: connection.serverId,
+      server_type: isRemoteServer ? 'remote-http' : 'local-stdio'
+    });
   }
 
   /**

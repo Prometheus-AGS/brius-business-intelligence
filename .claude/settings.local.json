@@ -27,7 +27,10 @@
       "Bash(node:*)",
       "mcp__mcp-filesystem__read_multiple_files",
       "mcp__mcp-filesystem__list_directory",
-      "mcp__mcp-filesystem__write_file"
+      "mcp__mcp-filesystem__write_file",
+      "Bash(pnpm build:*)",
+      "Bash(cut:*)",
+      "Bash(pnpm dev)"
     ],
     "deny": [],
     "ask": []

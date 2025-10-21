@@ -301,13 +301,91 @@ export class WorkflowTracer {
     }
 
     // End any remaining spans
-    for (const [stepId, span] of this.spans.entries()) {
+    const spanEntries = Array.from(this.spans.entries());
+    for (const [stepId, span] of spanEntries) {
       endSpan(span, {
         level: 'WARNING',
         statusMessage: 'Workflow ended before step completion',
       });
     }
     this.spans.clear();
+  }
+
+  /**
+   * Starts a new operation in the workflow
+   */
+  startOperation(
+    operationId: string,
+    operationName: string,
+    options: {
+      input?: any;
+      metadata?: Record<string, any>;
+    } = {}
+  ): any {
+    const span = createSpan(this.trace, operationName, {
+      input: options.input,
+      metadata: {
+        operationId,
+        ...options.metadata,
+      },
+      startTime: new Date(),
+    });
+
+    if (span) {
+      this.spans.set(operationId, span);
+    }
+
+    return span;
+  }
+
+  /**
+   * Ends a workflow operation
+   */
+  endOperation(
+    operationId: string,
+    options: {
+      output?: any;
+      metadata?: Record<string, any>;
+      error?: string;
+    } = {}
+  ): void {
+    const span = this.spans.get(operationId);
+    if (span) {
+      endSpan(span, {
+        output: options.output,
+        metadata: options.metadata,
+        level: options.error ? 'ERROR' : 'DEFAULT',
+        statusMessage: options.error,
+        endTime: new Date(),
+      });
+      this.spans.delete(operationId);
+    }
+  }
+
+  /**
+   * Starts a trace operation (compatibility method)
+   */
+  startTrace(operationName: string, options: { input?: any; metadata?: Record<string, any> } = {}): string | null {
+    const operationId = `${operationName}-${Date.now()}`;
+    this.startOperation(operationId, operationName, options);
+    return operationId;
+  }
+
+  /**
+   * Completes a trace operation (compatibility method)
+   */
+  completeTrace(operationId: string, options: { output?: any; metadata?: Record<string, any> } = {}): void {
+    this.endOperation(operationId, options);
+  }
+
+  /**
+   * Fails a trace operation (compatibility method)
+   */
+  failTrace(operationId: string, error: Error): void {
+    this.endOperation(operationId, {
+      error: error.message,
+      metadata: { stack: error.stack },
+    });
   }
 
   /**
@@ -386,6 +464,183 @@ export class AgentTracer {
         endTime: new Date(),
       });
     }
+  }
+
+  /**
+   * Gets the trace ID for correlation
+   */
+  getTraceId(): string | null {
+    return this.trace?.id || null;
+  }
+}
+
+/**
+ * Helper for MCP server tracing
+ */
+export class MCPTracer {
+  private trace: any;
+  private spans: Map<string, any> = new Map();
+
+  constructor(
+    serverName: string,
+    sessionId?: string,
+    options: {
+      userId?: string;
+      input?: any;
+      metadata?: Record<string, any>;
+    } = {}
+  ) {
+    this.trace = createTrace(`MCP Server: ${serverName}`, {
+      userId: options.userId,
+      sessionId: sessionId,
+      metadata: {
+        serverName,
+        ...options.metadata,
+      },
+      tags: ['mcp', 'server'],
+    });
+
+    if (this.trace && options.input) {
+      this.trace.update({ input: options.input });
+    }
+  }
+
+  /**
+   * Starts a new operation in the MCP server
+   */
+  startOperation(
+    operationId: string,
+    operationName: string,
+    options: {
+      input?: any;
+      metadata?: Record<string, any>;
+    } = {}
+  ): any {
+    const span = createSpan(this.trace, operationName, {
+      input: options.input,
+      metadata: {
+        operationId,
+        ...options.metadata,
+      },
+      startTime: new Date(),
+    });
+
+    if (span) {
+      this.spans.set(operationId, span);
+    }
+
+    return span;
+  }
+
+  /**
+   * Ends an MCP operation
+   */
+  endOperation(
+    operationId: string,
+    options: {
+      output?: any;
+      metadata?: Record<string, any>;
+      error?: string;
+    } = {}
+  ): void {
+    const span = this.spans.get(operationId);
+    if (span) {
+      endSpan(span, {
+        output: options.output,
+        metadata: options.metadata,
+        level: options.error ? 'ERROR' : 'DEFAULT',
+        statusMessage: options.error,
+        endTime: new Date(),
+      });
+      this.spans.delete(operationId);
+    }
+  }
+
+  /**
+   * Alias for startOperation - used by protocol handler
+   */
+  startTrace(
+    operationName: string,
+    options: {
+      input?: any;
+      metadata?: Record<string, any>;
+    } = {}
+  ): string {
+    const operationId = `trace-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    this.startOperation(operationId, operationName, options);
+    return operationId;
+  }
+
+  /**
+   * Complete a trace - alias for endOperation
+   */
+  completeTrace(
+    traceId: string,
+    options: {
+      output?: any;
+      metadata?: Record<string, any>;
+    } = {}
+  ): void {
+    this.endOperation(traceId, options);
+  }
+
+  /**
+   * Fail a trace - alias for endOperation with error
+   */
+  failTrace(
+    traceId: string,
+    error: string,
+    options: {
+      metadata?: Record<string, any>;
+    } = {}
+  ): void {
+    this.endOperation(traceId, {
+      error,
+      metadata: options.metadata,
+    });
+  }
+
+  /**
+   * Logs an event in the MCP server
+   */
+  logEvent(
+    name: string,
+    options: {
+      level?: 'DEBUG' | 'DEFAULT' | 'WARNING' | 'ERROR';
+      input?: any;
+      output?: any;
+      metadata?: Record<string, any>;
+    } = {}
+  ): void {
+    logEvent(this.trace, name, options);
+  }
+
+  /**
+   * Ends the MCP server trace
+   */
+  end(options: {
+    output?: any;
+    metadata?: Record<string, any>;
+    error?: string;
+  } = {}): void {
+    if (this.trace) {
+      this.trace.update({
+        output: options.output,
+        metadata: options.metadata,
+        level: options.error ? 'ERROR' : 'DEFAULT',
+        statusMessage: options.error,
+      });
+    }
+
+    // End any remaining spans
+    const spanEntries = Array.from(this.spans.entries());
+    for (const [operationId, span] of spanEntries) {
+      endSpan(span, {
+        level: 'WARNING',
+        statusMessage: 'MCP server ended before operation completion',
+      });
+    }
+    this.spans.clear();
   }
 
   /**

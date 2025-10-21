@@ -102,31 +102,26 @@ export class BedrockLLMService {
               const latency = endTime - startTime;
 
               return {
-                id: responseBody.id || `claude-${Date.now()}`,
-                model: request.modelId || this.config.claude.modelId,
                 content: responseBody.content,
-                role: responseBody.role || 'assistant',
-                stopReason: responseBody.stop_reason,
                 usage: {
                   inputTokens: responseBody.usage?.input_tokens || 0,
                   outputTokens: responseBody.usage?.output_tokens || 0,
                   totalTokens: (responseBody.usage?.input_tokens || 0) + (responseBody.usage?.output_tokens || 0),
                 },
+                model: request.modelId || this.config.claude.modelId,
+                stopReason: responseBody.stop_reason,
+                processingTimeMs: latency,
                 latencyMs: latency,
-                timestamp: new Date().toISOString(),
               };
             } catch (error) {
               throw this.handleAwsError(error as Error, 'claude_text_generation');
             }
           },
-          {
-            operation: 'claude_text_generation',
-            modelId: request.modelId || this.config.claude.modelId,
-          }
+          `claude_text_generation_${request.modelId || this.config.claude.modelId}`
         );
       },
       {
-        component: 'bedrock_llm_service',
+        component: 'system',
         operation: 'generateText',
         metadata: { modelId: request.modelId, messageCount: request.messages.length },
       },
@@ -185,10 +180,7 @@ export class BedrockLLMService {
           throw this.handleAwsError(error as Error, 'claude_text_generation_stream');
         }
       },
-      {
-        operation: 'claude_text_generation_stream',
-        modelId: request.modelId || this.config.claude.modelId,
-      }
+      `claude_text_generation_stream_${request.modelId || this.config.claude.modelId}`
     );
 
     const streamResponse = await generator;
@@ -203,6 +195,8 @@ export class BedrockLLMService {
           }
 
           const streamEvent: ClaudeStreamResponse = {
+            isStreaming: true,
+            isComplete: chunkData.type === 'message_stop' || chunkData.type === 'content_block_stop',
             type: chunkData.type,
             delta: chunkData.delta,
             message: chunkData.message,
@@ -241,13 +235,13 @@ export class BedrockLLMService {
 
             try {
               const payload = {
-                inputText: request.text,
+                inputText: request.inputText,
                 dimensions: request.dimensions || this.config.titan.dimensions,
                 normalize: request.normalize ?? this.config.titan.normalize,
               };
 
               const command = new InvokeModelCommand({
-                modelId: request.modelId || this.config.titan.modelId,
+                modelId: this.config.titan.modelId,
                 contentType: 'application/json',
                 accept: 'application/json',
                 body: JSON.stringify(payload),
@@ -265,24 +259,25 @@ export class BedrockLLMService {
 
               return {
                 embedding: responseBody.embedding,
-                inputTokenCount: responseBody.inputTokenCount || this.estimateTokenCount(request.text),
+                dimensions: responseBody.embedding?.length || (request.dimensions || this.config.titan.dimensions),
+                normalized: request.normalize ?? this.config.titan.normalize,
+                inputLength: request.inputText.length,
+                model: this.config.titan.modelId,
+                processingTimeMs: latency,
                 latencyMs: latency,
-                timestamp: new Date().toISOString(),
+                inputTokenCount: responseBody.inputTokenCount || this.estimateTokenCount(request.inputText),
               };
             } catch (error) {
               throw this.handleAwsError(error as Error, 'titan_embedding');
             }
           },
-          {
-            operation: 'titan_embedding',
-            modelId: request.modelId || this.config.titan.modelId,
-          }
+          `titan_embedding_${this.config.titan.modelId}`
         );
       },
       {
-        component: 'bedrock_llm_service',
+        component: 'system',
         operation: 'generateEmbedding',
-        metadata: { modelId: request.modelId, textLength: request.text.length },
+        metadata: { modelId: this.config.titan.modelId, textLength: request.inputText.length },
       },
       'medium'
     );
@@ -295,15 +290,14 @@ export class BedrockLLMService {
     return await withErrorHandling(
       async () => {
         const results: TitanEmbeddingResponse[] = [];
-        const batchSize = request.batchSize || 10;
+        const batchSize = 10; // Default batch size
 
         // Process in batches to avoid overwhelming the service
-        for (let i = 0; i < request.texts.length; i += batchSize) {
-          const batch = request.texts.slice(i, i + batchSize);
+        for (let i = 0; i < request.inputTexts.length; i += batchSize) {
+          const batch = request.inputTexts.slice(i, i + batchSize);
           const batchPromises = batch.map(async (text) => {
             const embeddingRequest: TitanEmbeddingRequest = {
-              text,
-              modelId: request.modelId,
+              inputText: text,
               dimensions: request.dimensions,
               normalize: request.normalize,
             };
@@ -314,7 +308,7 @@ export class BedrockLLMService {
           results.push(...batchResults);
 
           // Add delay between batches to respect rate limits
-          if (i + batchSize < request.texts.length) {
+          if (i + batchSize < request.inputTexts.length) {
             await new Promise(resolve => setTimeout(resolve, 100));
           }
         }
@@ -322,9 +316,9 @@ export class BedrockLLMService {
         return results;
       },
       {
-        component: 'bedrock_llm_service',
+        component: 'system',
         operation: 'generateEmbeddingBatch',
-        metadata: { textCount: request.texts.length, batchSize: request.batchSize },
+        metadata: { textCount: request.inputTexts.length, batchSize: 10 },
       },
       'medium'
     );
@@ -368,7 +362,7 @@ export class BedrockLLMService {
    * Validate Titan embedding request
    */
   private async validateTitanRequest(request: TitanEmbeddingRequest): Promise<void> {
-    if (!request.text || request.text.trim().length === 0) {
+    if (!request.inputText || request.inputText.trim().length === 0) {
       throw createBedrockError(
         'Text is required and cannot be empty',
         'INVALID_REQUEST',
@@ -388,7 +382,7 @@ export class BedrockLLMService {
     }
 
     // Check text length (Titan has a limit of ~8000 tokens)
-    const estimatedTokens = this.estimateTokenCount(request.text);
+    const estimatedTokens = this.estimateTokenCount(request.inputText);
     if (estimatedTokens > 8000) {
       throw createBedrockError(
         `Text is too long (estimated ${estimatedTokens} tokens, max 8000)`,

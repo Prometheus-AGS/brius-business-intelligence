@@ -23,6 +23,12 @@ export interface ClaudeTextGenerationRequest {
   /** Top-p for nucleus sampling */
   topP?: number;
 
+  /** Top-k for sampling */
+  topK?: number;
+
+  /** Model ID to use for generation */
+  modelId?: string;
+
   /** Stop sequences to halt generation */
   stopSequences?: string[];
 

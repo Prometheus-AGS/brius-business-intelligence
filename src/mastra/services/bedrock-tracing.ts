@@ -269,7 +269,7 @@ export class BedrockTracingService {
     const titanConfig = this.config.getTitanConfig();
 
     return {
-      'bedrock.model.id': request.modelId || titanConfig.modelId,
+      'bedrock.model.id': titanConfig.modelId,
       'bedrock.model.provider': 'titan',
       'bedrock.model.version': 'v2',
       'bedrock.request.operation': 'embedding',
@@ -277,7 +277,7 @@ export class BedrockTracingService {
       'bedrock.request.id': context?.requestId,
       'bedrock.titan.dimensions': request.dimensions || titanConfig.dimensions,
       'bedrock.titan.normalize': request.normalize ?? titanConfig.normalize,
-      'bedrock.titan.text_length': request.text?.length || 0,
+      'bedrock.titan.text_length': request.inputText?.length || 0,
     };
   }
 

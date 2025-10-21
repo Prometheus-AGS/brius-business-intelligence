@@ -66,7 +66,7 @@ export async function generateEmbeddings(
       };
     },
     {
-      component: 'embeddings',
+      component: 'tool',
       operation: 'generate_embeddings',
       metadata: {
         textCount: Array.isArray(request.text) ? request.text.length : 1,
@@ -163,7 +163,7 @@ export async function generateSingleEmbedding(
       return embedding;
     },
     {
-      component: 'embeddings',
+      component: 'tool',
       operation: 'generate_single_embedding',
       metadata: {
         textLength: text.length,
@@ -277,7 +277,7 @@ export async function checkEmbeddingHealth(): Promise<{
       };
     },
     {
-      component: 'embeddings',
+      component: 'tool',
       operation: 'health_check',
     },
     'low'

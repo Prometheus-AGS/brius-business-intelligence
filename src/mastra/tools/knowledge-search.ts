@@ -76,14 +76,14 @@ export const searchKnowledgeBaseTool = createTool({
     searchType: z.string(),
     processingTime: z.number(),
   }),
-  execute: async ({ context, input }) => {
+  execute: async ({ context }) => {
     return await executeKnowledgeToolWithTracing(
       'search-knowledge-base',
       'Search Knowledge Base',
       context,
-      input,
+      context,
       async () => {
-        const { query, searchType, maxResults, minScore, categories, tags } = input;
+        const { query, searchType, maxResults, minScore, categories, tags } = context;
 
         knowledgeLogger.info('Agent searching knowledge base', {
           agent_id: (context as any)?.metadata?.agentId || 'unknown',
@@ -172,8 +172,8 @@ export const getDocumentTool = createTool({
     })).optional(),
     chunksCount: z.number(),
   }),
-  execute: async ({ context, input }) => {
-    const { documentId, includeChunks, maxChunks } = input;
+  execute: async ({ context }) => {
+    const { documentId, includeChunks, maxChunks } = context;
 
     knowledgeLogger.info('Agent retrieving document', {
       agent_id: (context as any)?.metadata?.agentId || 'unknown',
@@ -198,7 +198,8 @@ export const getDocumentTool = createTool({
       const document = documentResult.rows[0];
 
       // Check user access
-      if ((context as any)?.metadata?.userId || 'unknown' && document.upload_user_id !== (context as any)?.metadata?.userId || 'unknown') {
+      const userId = (context as any)?.metadata?.userId || 'unknown';
+      if (userId && document.upload_user_id !== userId) {
         throw new Error('Access denied to document');
       }
 
@@ -293,8 +294,8 @@ export const findSimilarDocumentsTool = createTool({
     totalSimilar: z.number(),
     referenceQuery: z.string(),
   }),
-  execute: async ({ context, input }) => {
-    const { documentId, query, maxResults, minScore, categories } = input;
+  execute: async ({ context }) => {
+    const { documentId, query, maxResults, minScore, categories } = context;
 
     knowledgeLogger.info('Agent finding similar documents', {
       agent_id: (context as any)?.metadata?.agentId || 'unknown',
@@ -324,7 +325,8 @@ export const findSimilarDocumentsTool = createTool({
         const referenceDoc = referenceDocResult.rows[0];
 
         // Check user access
-        if ((context as any)?.metadata?.userId || 'unknown' && referenceDoc.upload_user_id !== (context as any)?.metadata?.userId || 'unknown') {
+        const userId = (context as any)?.metadata?.userId || 'unknown';
+        if (userId && referenceDoc.upload_user_id !== userId) {
           throw new Error('Access denied to reference document');
         }
 
@@ -409,8 +411,8 @@ export const getKnowledgeStatsTool = createTool({
       documentsUploadedThisMonth: z.number(),
     }).optional(),
   }),
-  execute: async ({ context, input }) => {
-    const { includeCategories, includeRecentActivity } = input;
+  execute: async ({ context }) => {
+    const { includeCategories, includeRecentActivity } = context;
 
     knowledgeLogger.info('Agent getting knowledge base statistics', {
       agent_id: (context as any)?.metadata?.agentId || 'unknown',

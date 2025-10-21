@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createTool } from '@mastra/core/tools';
+import { createTool, ToolInvocationOptions } from '@mastra/core/tools';
 import { workflows } from '../../index.js';
 import { rootLogger } from '../../observability/logger.js';
 import { MCPTracer } from '../../observability/langfuse.js';
@@ -96,13 +96,16 @@ function createWorkflowExecutionTool(workflowId: string, workflow: any) {
     description: `Execute ${workflowId} workflow for structured business processes. This workflow provides coordinated execution of multiple steps with proper error handling and state management.`,
     inputSchema: WorkflowExecutionInputSchema,
     outputSchema: WorkflowExecutionOutputSchema,
-    execute: async ({ context, input }) => {
+    execute: async (context: any, options?: any) => {
+    const input = context;
       const startTime = Date.now();
       const tracer = new MCPTracer(`workflow-execution-${workflowId}`, `exec-${Date.now()}`, {
-        workflowId,
-        userId: input.context?.userId,
-        sessionId: input.context?.sessionId,
-        input: JSON.stringify(input.input).substring(0, 200),
+        metadata: {
+          workflowId,
+          userId: input.context?.userId,
+          sessionId: input.context?.sessionId,
+          inputPreview: JSON.stringify(input.input).substring(0, 200),
+        },
       });
 
       try {
@@ -127,9 +130,9 @@ function createWorkflowExecutionTool(workflowId: string, workflow: any) {
 
         // Prepare execution context
         const executionContext: WorkflowExecutionContext = {
-          userId: execContext.userId || context.userId || 'mcp-client',
-          sessionId: execContext.sessionId || context.sessionId || `mcp-${Date.now()}`,
-          traceId: execContext.traceId || tracer.getTraceId(),
+          userId: execContext.userId || 'mcp-client',
+          sessionId: execContext.sessionId || `mcp-${Date.now()}`,
+          traceId: execContext.traceId || `trace-${Date.now()}`,
           metadata: {
             source: 'mcp-client',
             ...execContext.metadata,
@@ -150,10 +153,7 @@ function createWorkflowExecutionTool(workflowId: string, workflow: any) {
           stepsExecuted = ['classify-intent', 'fetch-memory', 'fetch-knowledge', 'planning', 'compile-context', 'execute-agent'];
         } else if (workflowId === 'planning') {
           const { executePlanning } = await import('../../workflows/planning.js');
-          result = await executePlanning(workflowInput, {
-            traceId: executionContext.traceId,
-            userId: executionContext.userId,
-          });
+          result = await executePlanning(workflowInput);
           stepsExecuted = ['gather-knowledge', 'generate-plan', 'validate-plan'];
         } else if (workflowId === 'intent-classifier') {
           // Generic workflow execution for intent classifier
@@ -281,7 +281,8 @@ function createWorkflowInfoTool(workflowId: string, workflow: any) {
         averageStepsCompleted: z.number().describe('Average steps completed'),
       }).optional(),
     }),
-    execute: async ({ context, input }) => {
+    execute: async (context: any, options?: any) => {
+    const input = context;
       try {
         const { includeSteps, includeSchema, includeMetrics } = input;
 
@@ -374,7 +375,8 @@ export const listWorkflowsTool = createTool({
     })),
     totalCount: z.number().describe('Total number of workflows'),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any, options?: any) => {
+    const input = context;
     try {
       const { includeInactive, category, detailed } = input;
 
@@ -462,7 +464,8 @@ export const workflowHealthCheckTool = createTool({
       averageResponseTime: z.number().describe('Average response time'),
     }),
   }),
-  execute: async ({ context, input }) => {
+  execute: async (context: any, options?: ToolInvocationOptions | undefined) => {
+    const input = context;
     try {
       const { workflowId, includeSteps, timeout } = input;
       const startTime = Date.now();
@@ -477,17 +480,18 @@ export const workflowHealthCheckTool = createTool({
       const results = [];
 
       for (const id of workflowsToCheck) {
-        const workflow = workflows[id];
+        const workflow = (workflows as any)[id];
         if (!workflow) {
           results.push({
-            workflowId: id,
-            status: 'unhealthy' as const,
+            workflowId: id as string,
+            status: 'unhealthy' as 'healthy' | 'unhealthy' | 'warning',
             checks: {
               initialization: false,
               steps: false,
               schema: false,
               dependencies: false,
             },
+            stepChecks: undefined,
             responseTime: 0,
             issues: ['Workflow not found'],
             lastChecked: new Date().toISOString(),
@@ -537,23 +541,23 @@ export const workflowHealthCheckTool = createTool({
 
             return {
               stepId: step.id || 'unknown',
-              status: stepIssues.length === 0 ? 'healthy' as const : 'warning' as const,
+              status: stepIssues.length === 0 ? 'healthy' as 'healthy' | 'unhealthy' | 'warning' : 'warning' as 'healthy' | 'unhealthy' | 'warning',
               issues: stepIssues,
             };
           });
 
           // Add step issues to main issues
-          const unhealthySteps = stepChecks.filter(sc => sc.status === 'unhealthy').length;
+          const unhealthySteps = stepChecks.filter((sc: any) => sc.status === 'unhealthy').length;
           if (unhealthySteps > 0) {
             issues.push(`${unhealthySteps} unhealthy steps found`);
           }
         }
 
         const responseTime = Date.now() - checkStartTime;
-        const status = issues.length === 0 ? 'healthy' : issues.length < 3 ? 'warning' : 'unhealthy';
+        const status: 'healthy' | 'unhealthy' | 'warning' = issues.length === 0 ? 'healthy' : issues.length < 3 ? 'warning' : 'unhealthy';
 
         results.push({
-          workflowId: id,
+          workflowId: id as string,
           status,
           checks,
           stepChecks,

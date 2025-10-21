@@ -60,12 +60,6 @@ export class HTTPSSETransport extends EventEmitter {
     super();
 
     this.options = {
-      cors: {
-        origin: true,
-        credentials: true,
-        methods: ['GET', 'POST', 'OPTIONS'],
-        headers: ['Content-Type', 'Authorization', 'Accept'],
-      },
       heartbeatInterval: 30000, // 30 seconds
       maxConnections: 100,
       timeout: 300000, // 5 minutes
@@ -83,9 +77,11 @@ export class HTTPSSETransport extends EventEmitter {
     // Initialize tracing if enabled
     if (this.options.enableTracing) {
       this.tracer = new MCPTracer('mcp-sse-transport', `sse-${Date.now()}`, {
-        transport: 'sse',
-        path: this.options.path,
-        messagePath: this.options.messagePath,
+        metadata: {
+          transport: 'sse',
+          path: this.options.path,
+          messagePath: this.options.messagePath,
+        },
       });
     }
 
@@ -106,36 +102,38 @@ export class HTTPSSETransport extends EventEmitter {
    */
   async handleRequest(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
     const traceId = this.tracer?.startTrace('handle-request', {
-      method: req.method,
-      url: url.pathname,
-      userAgent: req.headers['user-agent'],
-      origin: req.headers.origin,
+      metadata: {
+        method: req.method,
+        url: url.pathname,
+        userAgent: req.headers['user-agent'],
+        origin: req.headers.origin,
+      },
     });
 
     try {
       // Handle CORS preflight
       if (req.method === 'OPTIONS') {
         this.handleCORSPreflight(req, res);
-        this.tracer?.completeTrace(traceId, { type: 'cors-preflight' });
+        if (traceId) this.tracer?.completeTrace(traceId, { metadata: { type: 'cors-preflight' } });
         return true;
       }
 
       // Handle SSE connection
       if (url.pathname === this.options.path && req.method === 'GET') {
         await this.handleSSEConnection(req, res);
-        this.tracer?.completeTrace(traceId, { type: 'sse-connection' });
+        if (traceId) this.tracer?.completeTrace(traceId, { metadata: { type: 'sse-connection' } });
         return true;
       }
 
       // Handle message posting
       if (url.pathname === this.options.messagePath && req.method === 'POST') {
         await this.handleMessagePost(req, res);
-        this.tracer?.completeTrace(traceId, { type: 'message-post' });
+        if (traceId) this.tracer?.completeTrace(traceId, { metadata: { type: 'message-post' } });
         return true;
       }
 
       // Not handled by this transport
-      this.tracer?.completeTrace(traceId, { type: 'not-handled' });
+      if (traceId) this.tracer?.completeTrace(traceId, { metadata: { type: 'not-handled' } });
       return false;
 
     } catch (error) {
@@ -145,7 +143,7 @@ export class HTTPSSETransport extends EventEmitter {
         url: url.pathname,
         error: errorMessage,
       });
-      this.tracer?.failTrace(traceId, error instanceof Error ? error : new Error(errorMessage));
+      if (traceId) this.tracer?.failTrace(traceId, errorMessage);
 
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -596,8 +594,10 @@ export class HTTPSSETransport extends EventEmitter {
       // Complete tracing
       if (this.tracer) {
         this.tracer.end({
-          totalConnections: this.connections.size,
-          stats: this.getStats(),
+          metadata: {
+            totalConnections: this.connections.size,
+            stats: this.getStats(),
+          },
         });
       }
 

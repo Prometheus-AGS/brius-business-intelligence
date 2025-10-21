@@ -8,6 +8,7 @@ import { getToolCallTracer } from './tool-tracer.js';
 import { getAgentInteractionTracer } from './agent-tracer.js';
 import { getWorkflowExecutionTracer } from './workflow-tracer.js';
 import { getVectorStore, getConnectionPool } from '../config/consolidated-database.js';
+import { getVectorOpsService } from '../database/vector-ops.js';
 import { performSystemHealthCheck, performPgvectorHealthCheck } from '../api/health/index.js';
 import { withErrorHandling } from './error-handling.js';
 import { rootLogger } from './logger.js';
@@ -158,7 +159,7 @@ export class ObservabilityDashboard {
         const dbLatency = Date.now() - dbLatencyStart;
 
         // Get vector search performance
-        const vectorOps = getVectorStore();
+        const vectorOps = getVectorOpsService();
         const vectorLatencyStart = Date.now();
         const testVector = Array.from({ length: 1536 }, () => Math.random() * 2 - 1);
         await vectorOps.semanticSearch(testVector, {

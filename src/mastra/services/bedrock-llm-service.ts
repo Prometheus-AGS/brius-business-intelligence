@@ -181,7 +181,7 @@ export class BedrockLLMService {
               inputText: request.inputTexts[i],
               dimensions: request.dimensions,
               normalize: request.normalize,
-              metadata: { ...request.metadata, batchIndex: i },
+              metadata: request.metadata,
             };
 
             const result = await this.generateEmbedding(embeddingRequest);

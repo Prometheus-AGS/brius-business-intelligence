@@ -38,6 +38,7 @@ export interface BedrockServiceError extends Error {
 export type BedrockErrorCode =
   | 'MODEL_NOT_FOUND'
   | 'INVALID_REQUEST'
+  | 'INVALID_RESPONSE'
   | 'RATE_LIMIT_EXCEEDED'
   | 'CIRCUIT_BREAKER_OPEN'
   | 'REQUEST_TIMEOUT'
@@ -118,4 +119,36 @@ export class BedrockErrorFactory {
       retryDelayMs: retryAfterMs,
     } as BedrockServiceError;
   }
+}
+
+/**
+ * Utility functions for convenience
+ */
+export function createBedrockError(
+  message: string,
+  code: BedrockErrorCode,
+  category: BedrockServiceError['category'],
+  retryable: boolean,
+  details?: Record<string, any>,
+  originalError?: Error
+): BedrockServiceError {
+  return {
+    name: 'BedrockServiceError',
+    category,
+    code,
+    message,
+    retryable,
+    details,
+    originalError,
+  } as BedrockServiceError;
+}
+
+export function getErrorSeverity(error: BedrockServiceError): 'low' | 'medium' | 'high' {
+  if (error.category === 'circuit_breaker' || error.code === 'RATE_LIMIT_EXCEEDED') {
+    return 'high';
+  }
+  if (error.category === 'validation_error' || error.category === 'monitoring_error') {
+    return 'low';
+  }
+  return 'medium';
 }

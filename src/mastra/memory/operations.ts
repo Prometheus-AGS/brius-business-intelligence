@@ -2,7 +2,7 @@ import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { memoryLogger } from '../observability/logger.js';
 import { vectorStorage } from './storage.js';
 import { generateSingleEmbedding } from './embeddings.js';
-import { getDrizzleDb, getVectorStore } from '../config/consolidated-database.js';
+import { getDrizzleDb, getVectorStore, getConnectionPool } from '../config/consolidated-database.js';
 import {
   userMemories,
   globalMemories,
@@ -55,7 +55,7 @@ type StatisticSummary = {
   };
 };
 
-const connectionManager = getVectorStore();
+const connectionPool = getConnectionPool();
 
 function mapUserMemory(row: UserMemoryRow) {
   return {
@@ -64,8 +64,8 @@ function mapUserMemory(row: UserMemoryRow) {
     content: row.content,
     category: row.category,
     metadata: row.metadata ?? {},
-    created_at: row.createdAt?.toISOString?.() ?? new Date(row.createdAt).toISOString(),
-    updated_at: row.updatedAt?.toISOString?.() ?? new Date(row.updatedAt).toISOString(),
+    created_at: row.createdAt?.toISOString?.() ?? (row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString()),
+    updated_at: row.updatedAt?.toISOString?.() ?? (row.updatedAt ? new Date(row.updatedAt).toISOString() : new Date().toISOString()),
   };
 }
 
@@ -76,8 +76,8 @@ function mapGlobalMemory(row: GlobalMemoryRow) {
     category: row.category,
     access_level: row.accessLevel,
     metadata: row.metadata ?? {},
-    created_at: row.createdAt?.toISOString?.() ?? new Date(row.createdAt).toISOString(),
-    updated_at: row.updatedAt?.toISOString?.() ?? new Date(row.updatedAt).toISOString(),
+    created_at: row.createdAt?.toISOString?.() ?? (row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString()),
+    updated_at: row.updatedAt?.toISOString?.() ?? (row.updatedAt ? new Date(row.updatedAt).toISOString() : new Date().toISOString()),
   };
 }
 
@@ -199,17 +199,19 @@ export class UserMemoryOperations {
 
     const orderColumn = orderBy === 'created_at' ? userMemories.createdAt : userMemories.updatedAt;
 
-    let query = this.db
+    // Build where conditions
+    const conditions = [eq(userMemories.userId, userId)];
+    if (category) {
+      conditions.push(eq(userMemories.category, category));
+    }
+
+    const query = this.db
       .select()
       .from(userMemories)
-      .where(eq(userMemories.userId, userId))
+      .where(conditions.length === 1 ? conditions[0] : and(...conditions))
       .offset(offset)
       .limit(limit)
       .orderBy(ascending ? asc(orderColumn) : desc(orderColumn));
-
-    if (category) {
-      query = query.where(and(eq(userMemories.userId, userId), eq(userMemories.category, category)));
-    }
 
     const rows = await query;
     return rows.map(mapUserMemory);
@@ -238,14 +240,14 @@ export class UserMemoryOperations {
     }
 
     const updatedMetadata = updates.metadata
-      ? { ...existing.metadata, ...updates.metadata }
+      ? { ...(existing.metadata ?? {}), ...updates.metadata }
       : existing.metadata;
 
     const contentToUse = updates.content ?? existing.content;
     const embedding = await generateSingleEmbedding(contentToUse);
     const embeddingString = `[${embedding.join(',')}]`;
 
-    await connectionManager.query(
+    await connectionPool.query(
       `
         UPDATE user_memories
         SET content = $1,
@@ -274,7 +276,7 @@ export class UserMemoryOperations {
    * Deletes user memory entry.
    */
   async delete(memoryId: string, userId: string): Promise<void> {
-    await connectionManager.query(
+    await connectionPool.query(
       `
         DELETE FROM user_memories
         WHERE id = $1 AND user_id = $2
@@ -306,10 +308,10 @@ export class UserMemoryOperations {
       const category = row.category ?? 'general';
       categories[category] = (categories[category] ?? 0) + 1;
 
-      const importance = (row.metadata?.importance as string) ?? 'medium';
+      const importance = ((row.metadata as Record<string, any>)?.importance as string) ?? 'medium';
       importanceLevels[importance] = (importanceLevels[importance] ?? 0) + 1;
 
-      const createdAt = row.createdAt?.toISOString?.() ?? new Date(row.createdAt).toISOString();
+      const createdAt = row.createdAt?.toISOString?.() ?? (row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString());
       if (!oldest || createdAt < oldest) oldest = createdAt;
       if (!newest || createdAt > newest) newest = createdAt;
     }
@@ -374,7 +376,6 @@ export class GlobalMemoryOperations {
       topK,
       similarityThreshold,
       accessLevel: 'public',
-      category,
     });
 
     if (results.length === 0) {
@@ -423,24 +424,25 @@ export class GlobalMemoryOperations {
 
     const orderColumn = orderBy === 'created_at' ? globalMemories.createdAt : globalMemories.updatedAt;
 
-    let query = this.db
-      .select()
-      .from(globalMemories)
-      .offset(offset)
-      .limit(limit)
-      .orderBy(ascending ? asc(orderColumn) : desc(orderColumn));
-
+    const conditions = [];
     if (category) {
-      query = query.where(eq(globalMemories.category, category));
+      conditions.push(eq(globalMemories.category, category));
     }
-
     if (accessLevel) {
-      query = query.where(
+      conditions.push(
         accessLevel === 'public'
           ? eq(globalMemories.accessLevel, 'public')
           : eq(globalMemories.accessLevel, accessLevel)
       );
     }
+
+    const query = this.db
+      .select()
+      .from(globalMemories)
+      .where(conditions.length === 0 ? undefined : (conditions.length === 1 ? conditions[0] : and(...conditions)))
+      .offset(offset)
+      .limit(limit)
+      .orderBy(ascending ? asc(orderColumn) : desc(orderColumn));
 
     const rows = await query;
     return rows.map(mapGlobalMemory);
@@ -467,14 +469,14 @@ export class GlobalMemoryOperations {
     }
 
     const contentToUse = updates.content ?? existing.content;
-    const metadataToUse = updates.metadata ? { ...existing.metadata, ...updates.metadata } : existing.metadata;
+    const metadataToUse = updates.metadata ? { ...(existing.metadata ?? {}), ...updates.metadata } : existing.metadata;
     const categoryToUse = updates.category ?? existing.category;
     const accessLevelToUse = updates.accessLevel ?? existing.accessLevel;
 
     const embedding = await generateSingleEmbedding(contentToUse);
     const embeddingString = `[${embedding.join(',')}]`;
 
-    await connectionManager.query(
+    await connectionPool.query(
       `
         UPDATE global_memories
         SET content = $1,
@@ -509,13 +511,8 @@ export class GlobalMemoryOperations {
   }
 
   async delete(memoryId: string): Promise<void> {
-    await refreshDatabaseClient();
-
-    await connectionManager.query(
-      `
-        DELETE FROM global_memories
-        WHERE id = $1
-      `,
+    await connectionPool.query(
+      `DELETE FROM global_memories WHERE id = $1`,
       [memoryId]
     );
   }
@@ -539,10 +536,10 @@ export class GlobalMemoryOperations {
       const category = row.category ?? 'general';
       categories[category] = (categories[category] ?? 0) + 1;
 
-      const importance = (row.metadata?.importance as string) ?? 'medium';
+      const importance = ((row.metadata as Record<string, any>)?.importance as string) ?? 'medium';
       importanceLevels[importance] = (importanceLevels[importance] ?? 0) + 1;
 
-      const createdAt = row.createdAt?.toISOString?.() ?? new Date(row.createdAt).toISOString();
+      const createdAt = row.createdAt?.toISOString?.() ?? (row.createdAt ? new Date(row.createdAt).toISOString() : new Date().toISOString());
       if (!oldest || createdAt < oldest) oldest = createdAt;
       if (!newest || createdAt > newest) newest = createdAt;
     }

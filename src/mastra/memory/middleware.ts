@@ -196,13 +196,13 @@ async function getUserMemoryContext(
       const combinedResults = new Map<string, MemorySearchResult>();
       categoryResults.flat().forEach(result => {
         const existing = combinedResults.get(result.id);
-        if (!existing || result.similarity > existing.similarity) {
+        if (!existing || result.similarity_score > existing.similarity_score) {
           combinedResults.set(result.id, result);
         }
       });
 
       return Array.from(combinedResults.values())
-        .sort((a, b) => b.similarity - a.similarity)
+        .sort((a, b) => b.similarity_score - a.similarity_score)
         .slice(0, config.maxUserMemories);
     }
 
@@ -244,13 +244,13 @@ async function getGlobalMemoryContext(
       const combinedResults = new Map<string, MemorySearchResult>();
       categoryResults.flat().forEach(result => {
         const existing = combinedResults.get(result.id);
-        if (!existing || result.similarity > existing.similarity) {
+        if (!existing || result.similarity_score > existing.similarity_score) {
           combinedResults.set(result.id, result);
         }
       });
 
       return Array.from(combinedResults.values())
-        .sort((a, b) => b.similarity - a.similarity)
+        .sort((a, b) => b.similarity_score - a.similarity_score)
         .slice(0, config.maxGlobalMemories);
     }
 

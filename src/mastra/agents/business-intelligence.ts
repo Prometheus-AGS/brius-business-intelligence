@@ -1,8 +1,8 @@
 import { Agent } from '@mastra/core/agent';
-import { openai } from '@ai-sdk/openai';
 import type { ChatCompletionRequest } from '../types/index.js';
 import { getMemoryStore } from '../config/consolidated-database.js';
 import { ensureMcpToolsLoaded, getSharedToolMap } from './shared-tools.js';
+import { chatModel } from '../config/llm-config.js';
 
 const BUSINESS_INTELLIGENCE_INSTRUCTIONS = `You are an expert business intelligence analyst powered by advanced AI capabilities.
 
@@ -38,7 +38,7 @@ export const businessIntelligenceAgent = new Agent({
   name: 'business-intelligence-agent',
   description: 'Provides executive-ready analysis for complex business questions.',
   instructions: BUSINESS_INTELLIGENCE_INSTRUCTIONS,
-  model: openai('gpt-4o-mini'),
+  model: chatModel, // Using Bedrock Claude 4 Sonnet via direct provider
   tools: async () => getSharedToolMap(),
   memory: getMemoryStore(),
 });

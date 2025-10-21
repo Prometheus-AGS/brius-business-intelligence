@@ -180,12 +180,12 @@ export class DocumentProcessingQueue extends EventEmitter {
       // Remove existing chunks if reprocessing
       await db.delete(documentChunks).where(eq(documentChunks.documentId, document.id));
 
-      const metadata = job.metadata ?? {};
+      const metadata: ProcessingMetadata = (job.metadata ?? {}) as ProcessingMetadata;
 
       await processDocument(document, {
-        chunkStrategy: metadata.chunkStrategy as DocumentChunkingStrategy | undefined,
-        chunkSize: typeof metadata.chunkSize === 'number' ? metadata.chunkSize : undefined,
-        overlap: typeof metadata.overlap === 'number' ? metadata.overlap : undefined,
+        chunkStrategy: metadata.chunkStrategy,
+        chunkSize: metadata.chunkSize,
+        overlap: metadata.overlap,
         metadata,
       }, db);
 

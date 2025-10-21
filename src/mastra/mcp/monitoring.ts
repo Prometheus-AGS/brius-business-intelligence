@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { mcpClient, MCPConnection } from './client.js';
+import { mastraMCPClientManager, type MastraMCPConnection } from './mastra-client.js';
 import { mcpProcessManager, ProcessInfo } from './process-manager.js';
 import { mcpToolRegistry, ToolExecutionResponse } from './registry.js';
 import { mcpLogger } from '../observability/logger.js';
@@ -435,7 +436,7 @@ export class MCPMonitoringSystem extends EventEmitter {
    * Perform health checks on all servers
    */
   private async performHealthChecks(): Promise<void> {
-    const connections = mcpClient.getAllConnections();
+    const connections = mastraMCPClientManager.getAllConnections();
 
     for (const connection of connections) {
       try {
@@ -453,7 +454,7 @@ export class MCPMonitoringSystem extends EventEmitter {
   /**
    * Perform health check on specific server
    */
-  private async performServerHealthCheck(connection: MCPConnection): Promise<MCPHealthCheck> {
+  private async performServerHealthCheck(connection: MastraMCPConnection): Promise<MCPHealthCheck> {
     const startTime = Date.now();
     let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
     let error: string | undefined;
@@ -563,7 +564,7 @@ export class MCPMonitoringSystem extends EventEmitter {
     };
 
     // Connection metrics
-    const connections = mcpClient.getAllConnections();
+    const connections = mastraMCPClientManager.getAllConnections();
     const activeConnections = connections.filter(conn => conn.status === 'connected').length;
     const failedConnections = connections.filter(conn => conn.status === 'failed').length;
 
@@ -711,7 +712,7 @@ export class MCPMonitoringSystem extends EventEmitter {
   /**
    * Handle connection events
    */
-  private handleConnectionEvent(event: string, serverId: string, connection: MCPConnection): void {
+  private handleConnectionEvent(event: string, serverId: string, connection: MastraMCPConnection): void {
     mcpLogger.info('Connection event handled', {
       event,
       server_id: serverId,
@@ -749,7 +750,6 @@ export class MCPMonitoringSystem extends EventEmitter {
           tool_id: execution.toolId,
           execution_id: execution.id,
           server_id: execution.metadata.serverId,
-          namespace: execution.metadata.namespace,
         },
         tags: ['mcp', 'tool-execution'],
       });
@@ -760,8 +760,7 @@ export class MCPMonitoringSystem extends EventEmitter {
           metadata: {
             execution_id: execution.id,
             server_id: execution.metadata.serverId,
-            namespace: execution.metadata.namespace,
-          },
+            },
         });
 
         if (span) {

@@ -33,7 +33,7 @@ export const storeUserMemoryTool = createTool({
       memory_id: memory.id,
       content: memory.content,
       category: memory.category ?? undefined,
-      importance: memory.metadata?.importance ?? 'medium',
+      importance: (memory.metadata as any)?.importance ?? 'medium',
     };
   },
 });

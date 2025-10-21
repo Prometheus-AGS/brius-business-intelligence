@@ -36,8 +36,8 @@ export class BedrockModelConfig {
       },
       titan: {
         ...DEFAULT_BEDROCK_CONFIG.titan,
-        dimensions: process.env.BEDROCK_TITAN_DIMENSIONS 
-          ? (parseInt(process.env.BEDROCK_TITAN_DIMENSIONS, 10) as 256 | 512 | 1024)
+        dimensions: process.env.BEDROCK_TITAN_DIMENSIONS
+          ? (parseInt(process.env.BEDROCK_TITAN_DIMENSIONS, 10) as 256 | 512 | 1024 | 1536)
           : DEFAULT_BEDROCK_CONFIG.titan.dimensions,
       },
       circuitBreaker: {
@@ -137,9 +137,9 @@ export class BedrockModelConfig {
     }
 
     // Validate Titan configuration
-    const validDimensions = [256, 512, 1024];
+    const validDimensions = [256, 512, 1024, 1536];
     if (!validDimensions.includes(this.config.titan.dimensions)) {
-      errors.push('Titan dimensions must be 256, 512, or 1024');
+      errors.push('Titan dimensions must be 256, 512, 1024, or 1536');
     }
 
     // Validate circuit breaker configuration

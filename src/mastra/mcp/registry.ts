@@ -1,55 +1,33 @@
+
+import { EventEmitter } from 'events';
 import { z } from 'zod';
+import { readFile, access } from 'fs/promises';
+import { resolve } from 'path';
+import { mcpConfigLoader, ResolvedMCPConfig, ResolvedMCPServerConfig } from './config-loader.js';
+import { mastraMCPClientManager, type MastraMCPConnection } from './mastra-client.js';
 import { mcpToolMapper, MappedTool, ToolNamespace } from './tool-mapper.js';
-import { mcpClient } from './client.js';
+import { mcpMonitoringSystem, MCPMonitoringMetrics, MCPHealthCheck } from './monitoring.js';
 import { mcpLogger } from '../observability/logger.js';
+import { createTrace, createSpan, endSpan } from '../observability/langfuse.js';
 
 /**
  * MCP Tool Registry
- * Provides playground integration for MCP tools with discovery, testing, and execution capabilities
- * Serves as the bridge between MCP tools and the Mastra playground interface
+ * Central orchestration system for all MCP infrastructure components
+ * Now uses the official @mastra/mcp package for server connections
+ * Manages both hardcoded Supabase server and dynamic servers from mcp.json
+ * Provides unified tool catalog and execution engine for the Mastra ecosystem
  */
 
-export interface PlaygroundTool {
-  id: string;
-  name: string;
-  displayName: string;
-  description: string;
-  category: string;
-  namespace: string;
-  serverId: string;
-  inputSchema: unknown; // JSON Schema for playground UI
-  outputSchema?: unknown;
-  examples: ToolExample[];
-  metadata: {
-    discoveredAt: string;
-    lastExecuted?: string;
-    executionCount: number;
-    averageExecutionTime: number;
-    successRate: number;
-    tags: string[];
-    isAvailable: boolean;
-    health: 'healthy' | 'degraded' | 'unavailable';
-  };
-}
-
-export interface ToolExample {
-  name: string;
-  description: string;
-  input: Record<string, unknown>;
-  expectedOutput?: unknown;
-  metadata?: {
-    difficulty: 'basic' | 'intermediate' | 'advanced';
-    useCase: string;
-  };
-}
-
+// Core interfaces for the registry
 export interface ToolExecutionRequest {
   toolId: string;
-  arguments: Record<string, any>;
+  arguments: Record<string, unknown>;
   metadata?: {
     sessionId?: string;
     userId?: string;
-    source: 'playground' | 'agent' | 'api';
+    source?: 'playground' | 'agent' | 'api';
+    traceId?: string;
+    spanId?: string;
   };
 }
 
@@ -63,299 +41,414 @@ export interface ToolExecutionResponse {
   timestamp: string;
   metadata: {
     serverId: string;
-    namespace: string;
-    inputValidation: boolean;
-    cacheHit?: boolean;
+    toolName: string;
+    argumentsCount: number;
+    source?: string;
+    sessionId?: string;
+    userId?: string;
+    traceId?: string;
+    spanId?: string;
+  };
+}
+
+export interface PlaygroundTool {
+  id: string;
+  displayName: string;
+  description: string;
+  namespace: string;
+  category: string;
+  serverId: string;
+  inputSchema: z.ZodSchema;
+  metadata: {
+    isAvailable: boolean;
+    executionCount: number;
+    successRate: number;
+    averageExecutionTime: number;
+    lastExecuted?: Date;
+    tags?: string[];
   };
 }
 
 export interface RegistryStats {
-  totalTools: number;
-  availableTools: number;
-  connectedServers: number;
-  totalNamespaces: number;
-  executionStats: {
-    totalExecutions: number;
-    successfulExecutions: number;
-    failedExecutions: number;
-    averageExecutionTime: number;
-  };
-  healthStats: {
+  servers: {
+    total: number;
+    connected: number;
     healthy: number;
     degraded: number;
     unavailable: number;
   };
+  tools: {
+    total: number;
+    available: number;
+    categories: Record<string, number>;
+    namespaces: Record<string, number>;
+  };
+  executions: {
+    total: number;
+    successful: number;
+    failed: number;
+    averageExecutionTime: number;
+    executionsPerHour: number;
+  };
+  uptime: {
+    startedAt: Date;
+    uptimeSeconds: number;
+  };
 }
 
-export interface RegistryFilter {
+export interface ToolSearchFilters {
   namespace?: string;
   category?: string;
   serverId?: string;
-  isAvailable?: boolean;
-  health?: 'healthy' | 'degraded' | 'unavailable';
+  available?: boolean;
+  query?: string;
   tags?: string[];
-  searchQuery?: string;
 }
 
-/**
- * MCP Tool Registry class
- */
-export class MCPToolRegistry {
-  private playgroundTools = new Map<string, PlaygroundTool>();
-  private executionHistory = new Map<string, ToolExecutionResponse[]>();
-  private executionCache = new Map<string, ToolExecutionResponse>();
-  private healthCheckInterval: NodeJS.Timeout | null = null;
+export interface MCPRegistryOptions {
+  enableSupabaseServer?: boolean;
+  configPath?: string;
+  autoStart?: boolean;
+  enableMonitoring?: boolean;
+  supabaseConfig?: {
+    projectRef: string;
+    mcpUrl: string;
+    features: string;
+    readOnly: boolean;
+    accessToken?: string;
+  };
+}
 
-  constructor() {
-    // Listen to tool mapper events
+// Schema for mcp.json format (different from MCPConfigLoader format)
+const MCPJsonServerConfigSchema = z.object({
+  command: z.string().min(1),
+  args: z.array(z.string()).optional().default([]),
+  env: z.record(z.string(), z.string()).optional().default({}),
+  description: z.string().optional(),
+  enabled: z.boolean().optional().default(true),
+  timeout: z.number().min(1000).optional().default(30000),
+  restart: z.boolean().optional().default(true),
+  maxRestarts: z.number().min(0).optional().default(5),
+  restartDelay: z.number().min(100).optional().default(1000),
+  categories: z.array(z.string()).optional().default([]),
+  metadata: z.record(z.string(), z.unknown()).optional().default({}),
+});
+
+const MCPJsonConfigSchema = z.object({
+  mcpServers: z.record(z.string(), MCPJsonServerConfigSchema),
+});
+
+type MCPJsonServerConfig = z.infer<typeof MCPJsonServerConfigSchema>;
+type MCPJsonConfig = z.infer<typeof MCPJsonConfigSchema>;
+
+const DEFAULT_REGISTRY_OPTIONS: Required<MCPRegistryOptions> = {
+  enableSupabaseServer: true,
+  configPath: process.env.MCP_CONFIG_PATH || './mcp.json',
+  autoStart: true,
+  enableMonitoring: true,
+  supabaseConfig: {
+    projectRef: process.env.SUPABASE_PROJECT_REF || '',
+    mcpUrl: process.env.SUPABASE_MCP_URL || '',
+    features: process.env.SUPABASE_MCP_FEATURES || 'functions,database',
+    readOnly: process.env.SUPABASE_MCP_READ_ONLY === 'true',
+    accessToken: process.env.SUPABASE_ACCESS_TOKEN || '',
+  },
+};
+
+/**
+ * MCP Tool Registry - Central orchestration class
+ */
+export class MCPToolRegistry extends EventEmitter {
+  private options: Required<MCPRegistryOptions>;
+  private isInitialized = false;
+  private isShuttingDown = false;
+  private startedAt: Date;
+  private toolExecutions = new Map<string, ToolExecutionResponse>();
+  private executionHistory: ToolExecutionResponse[] = [];
+  private supabaseServerId = 'supabase-mcp';
+
+  constructor(options: MCPRegistryOptions = {}) {
+    super();
+    this.options = { ...DEFAULT_REGISTRY_OPTIONS, ...options };
+    this.startedAt = new Date();
+
+    // Setup event listeners
     this.setupEventListeners();
 
-    // Start health monitoring
-    this.startHealthMonitoring();
+    mcpLogger.info('MCP Tool Registry initialized', {
+      enable_supabase: this.options.enableSupabaseServer,
+      config_path: this.options.configPath,
+      auto_start: this.options.autoStart,
+      enable_monitoring: this.options.enableMonitoring,
+    });
   }
 
   /**
-   * Initialize registry with current tools
+   * Initialize the MCP registry and all components
    */
   async initialize(): Promise<void> {
-    mcpLogger.info('Initializing MCP Tool Registry');
+    if (this.isInitialized) {
+      mcpLogger.warn('MCP Tool Registry already initialized');
+      return;
+    }
+
+    mcpLogger.info('Initializing MCP Tool Registry with Mastra MCP Client');
 
     try {
-      // Discover all tools from connected servers
-      await mcpToolMapper.discoverAllTools();
-
-      // Convert to playground format
-      const mappedTools = mcpToolMapper.getAllMappedTools();
-      for (const tool of mappedTools) {
-        const playgroundTool = this.convertToPlaygroundTool(tool);
-        this.playgroundTools.set(tool.id, playgroundTool);
+      // Step 1: Initialize hardcoded Supabase server if enabled
+      if (this.options.enableSupabaseServer && this.options.supabaseConfig.projectRef) {
+        await this.initializeSupabaseServer();
       }
 
-      mcpLogger.info('MCP Tool Registry initialized', {
-        tools_count: this.playgroundTools.size,
-        namespaces_count: mcpToolMapper.getAllNamespaces().length,
+      // Step 2: Load and initialize dynamic servers from configuration
+      await this.initializeDynamicServers();
+
+      // Step 3: Start monitoring system if enabled
+      if (this.options.enableMonitoring) {
+        mcpMonitoringSystem.start();
+      }
+
+      // Step 4: Discover and map all tools
+      await this.discoverAllTools();
+
+      this.isInitialized = true;
+
+      mcpLogger.info('MCP Tool Registry initialization completed', {
+        servers_count: mastraMCPClientManager.getAllConnections().length,
+        tools_count: mcpToolMapper.getAllMappedTools().length,
+        monitoring_enabled: this.options.enableMonitoring,
+      });
+
+      this.emit('registry:initialized', {
+        servers: mastraMCPClientManager.getAllConnections().length,
+        tools: mcpToolMapper.getAllMappedTools().length,
       });
 
     } catch (error) {
       mcpLogger.error('Failed to initialize MCP Tool Registry', {
         error: error instanceof Error ? error.message : String(error),
       });
+
+      this.emit('registry:initialization:failed', error);
       throw error;
     }
   }
 
   /**
-   * Get all playground tools
+   * Get all available tools with optional filtering
    */
-  getAllTools(filter?: RegistryFilter): PlaygroundTool[] {
-    let tools = Array.from(this.playgroundTools.values());
+  async getAllTools(filters?: ToolSearchFilters): Promise<PlaygroundTool[]> {
+    this.ensureInitialized();
 
-    if (filter) {
-      tools = this.applyFilter(tools, filter);
-    }
+    let tools = mcpToolMapper.getAllMappedTools();
 
-    return tools.sort((a, b) => {
-      // Sort by availability first, then by name
-      if (a.metadata.isAvailable !== b.metadata.isAvailable) {
-        return a.metadata.isAvailable ? -1 : 1;
+    mcpLogger.info('🔥 MCP REGISTRY getAllTools() - INITIAL MAPPED TOOLS', {
+      mapped_tools_count: tools.length,
+      mapped_tool_ids: tools.map(t => t.id),
+      mapped_tools_sample: tools.slice(0, 3).map(t => ({
+        id: t.id,
+        serverId: t.serverId,
+        namespace: t.namespace
+      }))
+    });
+
+    // Apply filters
+    if (filters) {
+      mcpLogger.info('🔥 APPLYING FILTERS TO MAPPED TOOLS', {
+        filters: filters,
+        tools_before_filtering: tools.length
+      });
+
+      if (filters.namespace) {
+        tools = tools.filter(tool => tool.namespace === filters.namespace);
+        mcpLogger.info('🔥 AFTER NAMESPACE FILTER', { tools_count: tools.length });
       }
-      return a.displayName.localeCompare(b.displayName);
-    });
-  }
-
-  /**
-   * Get tool by ID
-   */
-  getTool(toolId: string): PlaygroundTool | null {
-    return this.playgroundTools.get(toolId) || null;
-  }
-
-  /**
-   * Get tools by namespace
-   */
-  getToolsByNamespace(namespace: string): PlaygroundTool[] {
-    return this.getAllTools({ namespace });
-  }
-
-  /**
-   * Get tools by category
-   */
-  getToolsByCategory(category: string): PlaygroundTool[] {
-    return this.getAllTools({ category });
-  }
-
-  /**
-   * Search tools
-   */
-  searchTools(query: string): PlaygroundTool[] {
-    return this.getAllTools({ searchQuery: query });
-  }
-
-  /**
-   * Get available namespaces with tool counts
-   */
-  getNamespaces(): Array<ToolNamespace & { toolCount: number; availableToolCount: number }> {
-    const namespaces = mcpToolMapper.getAllNamespaces();
-
-    return namespaces.map(namespace => {
-      const tools = this.getToolsByNamespace(namespace.id);
-      const availableTools = tools.filter(tool => tool.metadata.isAvailable);
-
-      return {
-        ...namespace,
-        toolCount: tools.length,
-        availableToolCount: availableTools.length,
-      };
-    });
-  }
-
-  /**
-   * Get registry statistics
-   */
-  getStats(): RegistryStats {
-    const tools = this.getAllTools();
-    const availableTools = tools.filter(tool => tool.metadata.isAvailable);
-    const connectedServers = mcpClient.getConnectedServers().length;
-    const namespaces = this.getNamespaces();
-
-    // Calculate execution stats
-    let totalExecutions = 0;
-    let successfulExecutions = 0;
-    let failedExecutions = 0;
-    let totalExecutionTime = 0;
-
-    for (const tool of tools) {
-      totalExecutions += tool.metadata.executionCount;
-      const successCount = Math.round(tool.metadata.executionCount * tool.metadata.successRate);
-      successfulExecutions += successCount;
-      failedExecutions += tool.metadata.executionCount - successCount;
-      totalExecutionTime += tool.metadata.averageExecutionTime * tool.metadata.executionCount;
+      if (filters.category) {
+        tools = tools.filter(tool => tool.metadata.category === filters.category);
+        mcpLogger.info('🔥 AFTER CATEGORY FILTER', { tools_count: tools.length });
+      }
+      if (filters.serverId) {
+        tools = tools.filter(tool => tool.serverId === filters.serverId);
+        mcpLogger.info('🔥 AFTER SERVER_ID FILTER', { tools_count: tools.length });
+      }
+      if (filters.available !== undefined) {
+        const connectedServers = new Set(
+          mastraMCPClientManager.getConnectedServers().map(conn => conn.serverId)
+        );
+        mcpLogger.info('🔥 AVAILABILITY FILTER CHECK', {
+          filter_available: filters.available,
+          connected_servers: Array.from(connectedServers),
+          tools_server_ids: tools.map(t => t.serverId)
+        });
+        tools = tools.filter(tool =>
+          filters.available ? connectedServers.has(tool.serverId) : !connectedServers.has(tool.serverId)
+        );
+        mcpLogger.info('🔥 AFTER AVAILABILITY FILTER', {
+          tools_count: tools.length,
+          remaining_tool_ids: tools.map(t => t.id)
+        });
+      }
+      if (filters.query) {
+        const query = filters.query.toLowerCase();
+        tools = tools.filter(tool =>
+          tool.name.toLowerCase().includes(query) ||
+          tool.description.toLowerCase().includes(query) ||
+          tool.metadata.tags?.some(tag => tag.toLowerCase().includes(query))
+        );
+      }
+      if (filters.tags && filters.tags.length > 0) {
+        tools = tools.filter(tool =>
+          filters.tags!.some(filterTag =>
+            tool.metadata.tags?.includes(filterTag)
+          )
+        );
+      }
     }
 
-    // Calculate health stats
-    const healthStats = {
-      healthy: tools.filter(tool => tool.metadata.health === 'healthy').length,
-      degraded: tools.filter(tool => tool.metadata.health === 'degraded').length,
-      unavailable: tools.filter(tool => tool.metadata.health === 'unavailable').length,
-    };
-
-    return {
-      totalTools: tools.length,
-      availableTools: availableTools.length,
-      connectedServers,
-      totalNamespaces: namespaces.length,
-      executionStats: {
-        totalExecutions,
-        successfulExecutions,
-        failedExecutions,
-        averageExecutionTime: totalExecutions > 0 ? totalExecutionTime / totalExecutions : 0,
-      },
-      healthStats,
-    };
+    // Convert to playground format
+    return tools.map(tool => this.convertToPlaygroundTool(tool));
   }
 
   /**
-   * Execute tool from playground
+   * Get specific tool by ID
+   */
+  async getTool(toolId: string): Promise<PlaygroundTool | null> {
+    this.ensureInitialized();
+
+    const mappedTool = mcpToolMapper.getMappedTool(toolId);
+    if (!mappedTool) {
+      return null;
+    }
+
+    return this.convertToPlaygroundTool(mappedTool);
+  }
+
+  /**
+   * Execute a tool and return the response
    */
   async executeTool(request: ToolExecutionRequest): Promise<ToolExecutionResponse> {
-    const startTime = Date.now();
-    const executionId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    this.ensureInitialized();
 
-    mcpLogger.info('Executing tool from playground', {
+    const executionId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const startTime = Date.now();
+
+    // Create tracing span
+    const trace = request.metadata?.traceId ? null : createTrace('mcp_tool_execution', {
+      userId: request.metadata?.userId,
+      sessionId: request.metadata?.sessionId,
+      metadata: {
+        toolId: request.toolId,
+        source: request.metadata?.source || 'unknown',
+      },
+    });
+
+    const span = trace ? createSpan(trace, `execute_tool_${request.toolId}`, {
+      metadata: {
+        toolId: request.toolId,
+        argumentsCount: Object.keys(request.arguments).length,
+      },
+    }) : null;
+
+    mcpLogger.info('Executing MCP tool', {
       execution_id: executionId,
       tool_id: request.toolId,
-      source: request.metadata?.source || 'playground',
+      arguments_count: Object.keys(request.arguments).length,
+      source: request.metadata?.source,
       user_id: request.metadata?.userId,
+      session_id: request.metadata?.sessionId,
+      trace_id: trace?.id || request.metadata?.traceId,
+      span_id: span?.id,
     });
 
     try {
-      // Get playground tool
-      const playgroundTool = this.getTool(request.toolId);
-      if (!playgroundTool) {
-        throw new Error(`Tool not found in registry: ${request.toolId}`);
-      }
-
-      if (!playgroundTool.metadata.isAvailable) {
-        throw new Error(`Tool is currently unavailable: ${request.toolId}`);
-      }
-
-      // Get mapped tool for validation
+      // Get tool information
       const mappedTool = mcpToolMapper.getMappedTool(request.toolId);
       if (!mappedTool) {
-        throw new Error(`Tool mapping not found: ${request.toolId}`);
+        throw new Error(`Tool not found: ${request.toolId}`);
       }
 
-      // Validate input arguments
-      let inputValidation = false;
+      // Check if server is connected
+      const connection = mastraMCPClientManager.getConnection(mappedTool.serverId);
+      if (!connection || connection.status !== 'connected') {
+        throw new Error(`Server not connected: ${mappedTool.serverId}`);
+      }
+
+      // Validate arguments against tool schema
       try {
         mappedTool.inputSchema.parse(request.arguments);
-        inputValidation = true;
       } catch (validationError) {
-        throw new Error(`Input validation failed: ${validationError instanceof Error ? validationError.message : String(validationError)}`);
+        throw new Error(`Invalid arguments: ${validationError instanceof Error ? validationError.message : String(validationError)}`);
       }
 
-      // Check execution cache
-      const cacheKey = this.generateCacheKey(request.toolId, request.arguments);
-      const cachedResult = this.executionCache.get(cacheKey);
-      if (cachedResult && this.isCacheValid(cachedResult)) {
-        mcpLogger.debug('Returning cached execution result', {
-          execution_id: executionId,
-          tool_id: request.toolId,
-          cache_key: cacheKey,
-        });
-
-        return {
-          ...cachedResult,
-          id: executionId,
-          timestamp: new Date().toISOString(),
-          metadata: {
-            ...cachedResult.metadata,
-            cacheHit: true,
-          },
-        };
-      }
-
-      // Execute tool via MCP client
-      const mcpResult = await mcpClient.executeTool(
-        playgroundTool.serverId,
-        playgroundTool.name,
-        request.arguments
+      // Execute the tool via Mastra MCP client
+      const mcpResult = await mastraMCPClientManager.executeTool(
+        mappedTool.serverId,
+        mappedTool.originalTool.name,
+        request.arguments as Record<string, any>
       );
 
       const executionTime = Date.now() - startTime;
+
+      // Create execution response
       const response: ToolExecutionResponse = {
         id: executionId,
         toolId: request.toolId,
-        success: mcpResult.success,
-        result: mcpResult.result,
-        error: mcpResult.error,
+        success: true,
+        result: mcpResult,
         executionTime,
         timestamp: new Date().toISOString(),
         metadata: {
-          serverId: playgroundTool.serverId,
-          namespace: playgroundTool.namespace,
-          inputValidation,
-          cacheHit: false,
+          serverId: mappedTool.serverId,
+          toolName: mappedTool.originalTool.name,
+          argumentsCount: Object.keys(request.arguments).length,
+          source: request.metadata?.source,
+          sessionId: request.metadata?.sessionId,
+          userId: request.metadata?.userId,
+          traceId: trace?.id || request.metadata?.traceId,
+          spanId: span?.id,
         },
       };
 
-      // Update tool statistics
-      this.updateToolStats(request.toolId, response);
+      // Store execution
+      this.toolExecutions.set(executionId, response);
+      this.executionHistory.push(response);
 
-      // Cache successful results
-      if (response.success && this.shouldCacheResult(request.toolId)) {
-        this.executionCache.set(cacheKey, response);
+      // Keep only last 1000 executions in memory
+      if (this.executionHistory.length > 1000) {
+        this.executionHistory = this.executionHistory.slice(-1000);
       }
 
-      // Store execution history
-      this.addToExecutionHistory(request.toolId, response);
+      // Update tool usage statistics
+      mcpToolMapper.updateToolUsage(request.toolId, executionTime);
 
-      mcpLogger.info('Tool execution completed', {
+      // Track in monitoring system
+      if (this.options.enableMonitoring) {
+        mcpMonitoringSystem.trackToolExecution(response);
+      }
+
+      // Complete tracing
+      if (span) {
+        endSpan(span, {
+          output: response.result,
+          metadata: {
+            executionTime,
+            toolId: request.toolId,
+            serverId: mappedTool.serverId,
+          },
+          level: 'DEFAULT',
+          statusMessage: 'Tool executed successfully',
+        });
+      }
+
+      mcpLogger.info('MCP tool executed successfully', {
         execution_id: executionId,
         tool_id: request.toolId,
         success: response.success,
         execution_time_ms: executionTime,
+        trace_id: trace?.id || request.metadata?.traceId,
       });
+
+      this.emit('tool:executed', response);
 
       return response;
 
@@ -371,480 +464,578 @@ export class MCPToolRegistry {
         executionTime,
         timestamp: new Date().toISOString(),
         metadata: {
-          serverId: this.getTool(request.toolId)?.serverId || 'unknown',
-          namespace: this.getTool(request.toolId)?.namespace || 'unknown',
-          inputValidation: false,
+          serverId: 'unknown',
+          toolName: 'unknown',
+          argumentsCount: Object.keys(request.arguments).length,
+          source: request.metadata?.source,
+          sessionId: request.metadata?.sessionId,
+          userId: request.metadata?.userId,
+          traceId: trace?.id || request.metadata?.traceId,
+          spanId: span?.id,
         },
       };
 
-      // Update tool statistics
-      this.updateToolStats(request.toolId, response);
+      // Store failed execution
+      this.toolExecutions.set(executionId, response);
+      this.executionHistory.push(response);
 
-      // Store execution history
-      this.addToExecutionHistory(request.toolId, response);
+      // Track error in monitoring system
+      if (this.options.enableMonitoring) {
+        mcpMonitoringSystem.trackError(error instanceof Error ? error : new Error(errorMessage), {
+          execution_id: executionId,
+          tool_id: request.toolId,
+          source: request.metadata?.source,
+        });
+        mcpMonitoringSystem.trackToolExecution(response);
+      }
 
-      mcpLogger.error('Tool execution failed', {
+      // Complete tracing with error
+      if (span) {
+        endSpan(span, {
+          output: null,
+          metadata: {
+            executionTime,
+            error: errorMessage,
+            toolId: request.toolId,
+          },
+          level: 'ERROR',
+          statusMessage: `Tool execution failed: ${errorMessage}`,
+        });
+      }
+
+      mcpLogger.error('MCP tool execution failed', {
         execution_id: executionId,
         tool_id: request.toolId,
         execution_time_ms: executionTime,
         error: errorMessage,
+        trace_id: trace?.id || request.metadata?.traceId,
       });
+
+      this.emit('tool:execution:failed', response);
 
       throw error;
     }
   }
 
   /**
-   * Get execution history for a tool
+   * Get registry statistics
    */
-  getExecutionHistory(toolId: string, limit = 50): ToolExecutionResponse[] {
-    const history = this.executionHistory.get(toolId) || [];
-    return history
-      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-      .slice(0, limit);
-  }
+  getStats(): RegistryStats {
+    this.ensureInitialized();
 
-  /**
-   * Get tool examples
-   */
-  getToolExamples(toolId: string): ToolExample[] {
-    const tool = this.getTool(toolId);
-    return tool?.examples || [];
-  }
+    const connections = mastraMCPClientManager.getAllConnections();
+    const tools = mcpToolMapper.getAllMappedTools();
+    const healthChecks = this.options.enableMonitoring ? mcpMonitoringSystem.getHealthStatus() : [];
 
-  /**
-   * Refresh registry from tool mapper
-   */
-  async refresh(): Promise<void> {
-    mcpLogger.info('Refreshing MCP Tool Registry');
+    const connectedCount = connections.filter(c => c.status === 'connected').length;
+    const healthyCount = healthChecks.filter(h => h.status === 'healthy').length;
+    const degradedCount = healthChecks.filter(h => h.status === 'degraded').length;
 
-    // Clear existing tools
-    this.playgroundTools.clear();
+    const successfulExecutions = this.executionHistory.filter(e => e.success).length;
+    const totalExecutions = this.executionHistory.length;
+    const avgExecutionTime = totalExecutions > 0 
+      ? this.executionHistory.reduce((sum, e) => sum + e.executionTime, 0) / totalExecutions 
+      : 0;
 
-    // Rediscover tools
-    await this.initialize();
-
-    mcpLogger.info('MCP Tool Registry refreshed', {
-      tools_count: this.playgroundTools.size,
-    });
-  }
-
-  /**
-   * Convert mapped tool to playground format
-   */
-  private convertToPlaygroundTool(mappedTool: MappedTool): PlaygroundTool {
-    // Generate examples based on tool schema
-    const examples = this.generateToolExamples(mappedTool);
-
-    // Convert Zod schema to JSON Schema for playground UI
-    const inputSchema = this.zodToJsonSchema(mappedTool.inputSchema);
-
-    // Determine health status
-    const connection = mcpClient.getConnection(mappedTool.serverId);
-    const health = this.determineToolHealth(mappedTool, connection);
+    const uptimeSeconds = Math.floor((Date.now() - this.startedAt.getTime()) / 1000);
+    const executionsPerHour = totalExecutions > 0 && uptimeSeconds > 0 
+      ? (totalExecutions / uptimeSeconds) * 3600 
+      : 0;
 
     return {
-      id: mappedTool.id,
-      name: mappedTool.name,
-      displayName: this.formatDisplayName(mappedTool.name),
-      description: mappedTool.description,
-      category: mappedTool.metadata.category || 'general',
-      namespace: mappedTool.namespace,
-      serverId: mappedTool.serverId,
-      inputSchema,
-      examples,
-      metadata: {
-        discoveredAt: mappedTool.metadata.discoveredAt.toISOString(),
-        lastExecuted: undefined,
-        executionCount: mappedTool.metadata.usage_count || 0,
-        averageExecutionTime: mappedTool.metadata.avg_execution_time || 0,
-        successRate: 1.0, // Start with 100% success rate
-        tags: mappedTool.metadata.tags || [],
-        isAvailable: health !== 'unavailable',
-        health,
+      servers: {
+        total: connections.length,
+        connected: connectedCount,
+        healthy: healthyCount,
+        degraded: degradedCount,
+        unavailable: connections.length - connectedCount,
+      },
+      tools: {
+        total: tools.length,
+        available: tools.filter(t => {
+          const conn = mastraMCPClientManager.getConnection(t.serverId);
+          return conn?.status === 'connected';
+        }).length,
+        categories: tools.reduce((acc, tool) => {
+          const category = tool.metadata.category || 'uncategorized';
+          acc[category] = (acc[category] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+        namespaces: tools.reduce((acc, tool) => {
+          acc[tool.namespace] = (acc[tool.namespace] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+      },
+      executions: {
+        total: totalExecutions,
+        successful: successfulExecutions,
+        failed: totalExecutions - successfulExecutions,
+        averageExecutionTime: avgExecutionTime,
+        executionsPerHour,
+      },
+      uptime: {
+        startedAt: this.startedAt,
+        uptimeSeconds,
       },
     };
   }
 
   /**
-   * Apply filter to tools list
+   * Get execution history
    */
-  private applyFilter(tools: PlaygroundTool[], filter: RegistryFilter): PlaygroundTool[] {
-    return tools.filter(tool => {
-      if (filter.namespace && tool.namespace !== filter.namespace) {
-        return false;
-      }
-
-      if (filter.category && tool.category !== filter.category) {
-        return false;
-      }
-
-      if (filter.serverId && tool.serverId !== filter.serverId) {
-        return false;
-      }
-
-      if (filter.isAvailable !== undefined && tool.metadata.isAvailable !== filter.isAvailable) {
-        return false;
-      }
-
-      if (filter.health && tool.metadata.health !== filter.health) {
-        return false;
-      }
-
-      if (filter.tags && filter.tags.length > 0) {
-        const hasAnyTag = filter.tags.some(tag => tool.metadata.tags.includes(tag));
-        if (!hasAnyTag) {
-          return false;
-        }
-      }
-
-      if (filter.searchQuery) {
-        const query = filter.searchQuery.toLowerCase();
-        const searchable = `${tool.displayName} ${tool.description} ${tool.metadata.tags.join(' ')}`.toLowerCase();
-        if (!searchable.includes(query)) {
-          return false;
-        }
-      }
-
-      return true;
-    });
+  getExecutionHistory(limit = 100): ToolExecutionResponse[] {
+    return this.executionHistory.slice(-limit);
   }
 
   /**
-   * Generate tool examples
+   * Get monitoring metrics
    */
-  private generateToolExamples(mappedTool: MappedTool): ToolExample[] {
-    const examples: ToolExample[] = [];
-    const schema = mappedTool.originalTool.inputSchema;
-
-    if (!schema || !schema.properties) {
-      return [{
-        name: 'Basic Example',
-        description: `Basic usage of ${mappedTool.name}`,
-        input: {},
-        metadata: {
-          difficulty: 'basic',
-          useCase: 'general',
-        },
-      }];
+  getMonitoringMetrics(): MCPMonitoringMetrics | null {
+    if (!this.options.enableMonitoring) {
+      return null;
     }
+    return mcpMonitoringSystem.getMetrics();
+  }
+
+  /**
+   * Get health status
+   */
+  getHealthStatus(): MCPHealthCheck[] {
+    if (!this.options.enableMonitoring) {
+      return [];
+    }
+    return mcpMonitoringSystem.getHealthStatus();
+  }
+
+  /**
+   * Refresh tools for a specific server
+   */
+  async refreshServerTools(serverId: string): Promise<MappedTool[]> {
+    this.ensureInitialized();
+
+    mcpLogger.info('Refreshing tools for MCP server', { server_id: serverId });
 
     try {
-      // Generate basic example
-      const basicInput: Record<string, any> = {};
-      for (const [key, prop] of Object.entries(schema.properties as Record<string, any>)) {
-        basicInput[key] = this.generateExampleValue(prop, 'basic');
+      // Reconnect to the server to refresh tools
+      await mastraMCPClientManager.connectToServer(serverId, this.options.configPath);
+      
+      // Get the connection and its tools
+      const connection = mastraMCPClientManager.getConnection(serverId);
+      if (!connection) {
+        throw new Error(`Server connection not found: ${serverId}`);
       }
 
-      examples.push({
-        name: 'Basic Example',
-        description: `Basic usage of ${mappedTool.name}`,
-        input: basicInput,
-        metadata: {
-          difficulty: 'basic',
-          useCase: 'general',
-        },
-      });
-
-      // Generate advanced example if tool has multiple parameters
-      const paramCount = Object.keys(schema.properties).length;
-      if (paramCount > 2) {
-        const advancedInput: Record<string, any> = {};
-        for (const [key, prop] of Object.entries(schema.properties as Record<string, any>)) {
-          advancedInput[key] = this.generateExampleValue(prop, 'advanced');
-        }
-
-        examples.push({
-          name: 'Advanced Example',
-          description: `Advanced usage with all parameters`,
-          input: advancedInput,
-          metadata: {
-            difficulty: 'advanced',
-            useCase: 'comprehensive',
-          },
-        });
-      }
-
-    } catch (error) {
-      mcpLogger.warn('Failed to generate tool examples', {
-        tool_id: mappedTool.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    return examples;
-  }
-
-  /**
-   * Generate example value for schema property
-   */
-  private generateExampleValue(prop: any, complexity: 'basic' | 'advanced'): any {
-    if (!prop || typeof prop !== 'object') {
-      return 'example';
-    }
-
-    switch (prop.type) {
-      case 'string':
-        if (prop.enum) {
-          return prop.enum[0];
-        }
-        return complexity === 'basic' ? 'example' : `example_${complexity}`;
-
-      case 'number':
-      case 'integer':
-        return complexity === 'basic' ? 1 : 42;
-
-      case 'boolean':
-        return complexity === 'basic' ? true : false;
-
-      case 'array': {
-        const itemExample = prop.items ? this.generateExampleValue(prop.items, complexity) : 'item';
-        return complexity === 'basic' ? [itemExample] : [itemExample, itemExample];
-      }
-
-      case 'object':
-        return { key: 'value' };
-
-      default:
-        return 'example';
-    }
-  }
-
-  /**
-   * Convert Zod schema to JSON Schema
-   */
-  private zodToJsonSchema(zodSchema: z.ZodSchema): any {
-    // This is a simplified conversion
-    // In a real implementation, you might use a library like zod-to-json-schema
-    try {
-      // For now, return a basic object schema
-      return {
-        type: 'object',
-        properties: {},
-        additionalProperties: true,
-      };
-    } catch (error) {
-      return {
-        type: 'object',
-        additionalProperties: true,
-      };
-    }
-  }
-
-  /**
-   * Determine tool health status
-   */
-  private determineToolHealth(
-    mappedTool: MappedTool,
-    connection: any
-  ): 'healthy' | 'degraded' | 'unavailable' {
-    if (!connection || connection.status !== 'connected') {
-      return 'unavailable';
-    }
-
-    // Check process health
-    const processInfo = connection.processInfo;
-    if (!processInfo || processInfo.status !== 'running') {
-      return 'unavailable';
-    }
-
-    if (processInfo.healthStatus === 'unhealthy') {
-      return 'degraded';
-    }
-
-    // Check tool-specific metrics
-    if (mappedTool.metadata.usage_count && mappedTool.metadata.usage_count > 0) {
-      // If we have usage data, check success rate and performance
-      const avgTime = mappedTool.metadata.avg_execution_time || 0;
-      if (avgTime > 30000) { // > 30 seconds average
-        return 'degraded';
-      }
-    }
-
-    return 'healthy';
-  }
-
-  /**
-   * Format display name
-   */
-  private formatDisplayName(name: string): string {
-    return name
-      .replace(/[-_]/g, ' ')
-      .replace(/\b\w/g, l => l.toUpperCase());
-  }
-
-  /**
-   * Update tool statistics
-   */
-  private updateToolStats(toolId: string, response: ToolExecutionResponse): void {
-    const tool = this.getTool(toolId);
-    if (!tool) return;
-
-    const currentCount = tool.metadata.executionCount;
-    const currentAvgTime = tool.metadata.averageExecutionTime;
-    const currentSuccessRate = tool.metadata.successRate;
-
-    // Update execution count
-    tool.metadata.executionCount = currentCount + 1;
-
-    // Update average execution time
-    tool.metadata.averageExecutionTime = (currentAvgTime * currentCount + response.executionTime) / (currentCount + 1);
-
-    // Update success rate
-    const successCount = Math.round(currentCount * currentSuccessRate);
-    const newSuccessCount = successCount + (response.success ? 1 : 0);
-    tool.metadata.successRate = newSuccessCount / (currentCount + 1);
-
-    // Update last executed
-    tool.metadata.lastExecuted = response.timestamp;
-
-    // Update mapped tool stats
-    mcpToolMapper.updateToolUsage(toolId, response.executionTime);
-  }
-
-  /**
-   * Generate cache key
-   */
-  private generateCacheKey(toolId: string, args: Record<string, any>): string {
-    const argsString = JSON.stringify(args, Object.keys(args).sort());
-    return `${toolId}:${Buffer.from(argsString).toString('base64')}`;
-  }
-
-  /**
-   * Check if cached result is still valid
-   */
-  private isCacheValid(cachedResult: ToolExecutionResponse): boolean {
-    // Cache for 5 minutes
-    const cacheTimeout = 5 * 60 * 1000;
-    const age = Date.now() - new Date(cachedResult.timestamp).getTime();
-    return age < cacheTimeout;
-  }
-
-  /**
-   * Check if result should be cached
-   */
-  private shouldCacheResult(toolId: string): boolean {
-    // Only cache successful results for certain tool types
-    const tool = this.getTool(toolId);
-    if (!tool) return false;
-
-    // Cache read-only operations
-    const readOnlyCategories = ['search', 'analysis', 'utility'];
-    return readOnlyCategories.includes(tool.category);
-  }
-
-  /**
-   * Add execution to history
-   */
-  private addToExecutionHistory(toolId: string, response: ToolExecutionResponse): void {
-    if (!this.executionHistory.has(toolId)) {
-      this.executionHistory.set(toolId, []);
-    }
-
-    const history = this.executionHistory.get(toolId)!;
-    history.push(response);
-
-    // Keep only last 100 executions
-    if (history.length > 100) {
-      history.splice(0, history.length - 100);
-    }
-  }
-
-  /**
-   * Setup event listeners
-   */
-  private setupEventListeners(): void {
-    // Listen to connection events from MCP client
-    mcpClient.on('connection:established', async (serverId) => {
-      mcpLogger.info('Refreshing tools after connection established', { server_id: serverId });
-      try {
-        await mcpToolMapper.refreshServerTools(serverId);
-        await this.refresh();
-      } catch (error) {
-        mcpLogger.error('Failed to refresh tools after connection', {
-          server_id: serverId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    });
-
-    mcpClient.on('connection:lost', (serverId) => {
-      mcpLogger.info('Updating tool availability after connection lost', { server_id: serverId });
-      this.updateServerToolAvailability(serverId, false);
-    });
-  }
-
-  /**
-   * Update tool availability for a server
-   */
-  private updateServerToolAvailability(serverId: string, isAvailable: boolean): void {
-    for (const [toolId, tool] of this.playgroundTools.entries()) {
-      if (tool.serverId === serverId) {
-        tool.metadata.isAvailable = isAvailable;
-        tool.metadata.health = isAvailable ? 'healthy' : 'unavailable';
-
-        mcpLogger.debug('Updated tool availability', {
-          tool_id: toolId,
-          server_id: serverId,
-          is_available: isAvailable,
-        });
-      }
-    }
-  }
-
-  /**
-   * Start health monitoring
-   */
-  private startHealthMonitoring(): void {
-    this.healthCheckInterval = setInterval(() => {
-      this.performHealthCheck();
-    }, 60000); // Check every minute
-  }
-
-  /**
-   * Perform health check on all tools
-   */
-  private performHealthCheck(): void {
-    mcpLogger.debug('Performing tool registry health check');
-
-    for (const [toolId, tool] of this.playgroundTools.entries()) {
-      const connection = mcpClient.getConnection(tool.serverId);
-      const mappedTool = mcpToolMapper.getMappedTool(toolId);
-
-      if (mappedTool) {
-        const newHealth = this.determineToolHealth(mappedTool, connection);
-        if (tool.metadata.health !== newHealth) {
-          tool.metadata.health = newHealth;
-          tool.metadata.isAvailable = newHealth !== 'unavailable';
-
-          mcpLogger.info('Tool health status changed', {
-            tool_id: toolId,
-            previous_health: tool.metadata.health,
-            current_health: newHealth,
+      // Re-map tools from the refreshed connection
+      const mappedTools: MappedTool[] = [];
+      for (const tool of connection.tools) {
+        try {
+          const mappedTool = await mcpToolMapper.mapTool(tool, serverId);
+          mappedTools.push(mappedTool);
+        } catch (error) {
+          mcpLogger.warn('Failed to map tool during refresh', {
+            server_id: serverId,
+            tool_name: tool.name,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       }
+
+      mcpLogger.info('Server tools refreshed successfully', {
+        server_id: serverId,
+        tools_count: mappedTools.length,
+      });
+
+      return mappedTools;
+
+    } catch (error) {
+      mcpLogger.error('Failed to refresh server tools', {
+        server_id: serverId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
   }
 
   /**
-   * Shutdown registry
+   * Shutdown the registry
    */
   async shutdown(): Promise<void> {
+    if (this.isShuttingDown) return;
+
+    this.isShuttingDown = true;
     mcpLogger.info('Shutting down MCP Tool Registry');
 
-    if (this.healthCheckInterval) {
-      clearInterval(this.healthCheckInterval);
-      this.healthCheckInterval = null;
+    try {
+      // Stop monitoring system
+      if (this.options.enableMonitoring) {
+        mcpMonitoringSystem.stop();
+      }
+
+      // Shutdown MCP client manager
+      await mastraMCPClientManager.shutdown();
+
+      mcpLogger.info('MCP Tool Registry shutdown complete');
+
+    } catch (error) {
+      mcpLogger.error('Error during MCP Tool Registry shutdown', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * Initialize hardcoded Supabase MCP server
+   */
+  private async initializeSupabaseServer(): Promise<void> {
+    // Construct the Supabase MCP URL dynamically from environment variables
+    const projectRef = this.options.supabaseConfig.projectRef;
+    const features = this.options.supabaseConfig.features;
+    const accessToken = this.options.supabaseConfig.accessToken;
+    const supabaseUrl = `https://mcp.supabase.com/mcp?project_ref=${projectRef}&features=${encodeURIComponent(features)}`;
+
+    mcpLogger.info('Initializing hardcoded Supabase MCP server', {
+      project_ref: projectRef,
+      mcp_url: supabaseUrl,
+      features: features,
+      read_only: this.options.supabaseConfig.readOnly,
+      has_access_token: Boolean(accessToken),
+    });
+
+    // Validate required authentication
+    if (!accessToken) {
+      throw new Error('SUPABASE_ACCESS_TOKEN is required for Supabase MCP server authentication. Please set this environment variable with your Supabase Personal Access Token.');
     }
 
-    // Clear caches
-    this.executionCache.clear();
-    this.executionHistory.clear();
+    try {
+      // Create hardcoded configuration for remote Supabase MCP server
+      const supabaseConfig: ResolvedMCPServerConfig = {
+        id: this.supabaseServerId,
+        name: 'Supabase MCP Server',
+        command: 'remote-http', // Special marker for remote HTTP streaming servers
+        args: [supabaseUrl],
+        env: {},
+        resolvedCommand: 'remote-http',
+        resolvedCwd: process.cwd(),
+        resolvedEnv: {
+          SUPABASE_PROJECT_REF: projectRef,
+          SUPABASE_MCP_URL: supabaseUrl,
+          SUPABASE_MCP_FEATURES: features,
+          SUPABASE_MCP_READ_ONLY: this.options.supabaseConfig.readOnly.toString(),
+          SUPABASE_ACCESS_TOKEN: accessToken,
+        },
+        timeout: 30000,
+        restart: false, // Remote servers don't need restart management
+        maxRestarts: 0,
+        restartDelay: 1000,
+        enabled: true,
+        categories: ['database', 'supabase', 'remote'],
+        description: 'Hardcoded Supabase MCP server for database operations via remote HTTP streaming',
+        version: '1.0.0',
+        metadata: {
+          hardcoded: true,
+          priority: 100,
+          serverType: 'remote-http',
+          url: supabaseUrl,
+        },
+      };
 
-    mcpLogger.info('MCP Tool Registry shutdown complete');
+      // Register the hardcoded server configuration with the config loader
+      await mcpConfigLoader.registerHardcodedServer(this.supabaseServerId, supabaseConfig);
+
+      // Connect to the remote Supabase server using Mastra MCP client
+      mcpLogger.info('Connecting to remote Supabase MCP server', {
+        server_id: this.supabaseServerId,
+        url: supabaseUrl,
+      });
+
+      await mastraMCPClientManager.connectToServer(this.supabaseServerId);
+
+      mcpLogger.info('Supabase MCP server initialized successfully', {
+        server_id: this.supabaseServerId,
+        server_type: 'remote-http',
+        url: supabaseUrl,
+      });
+
+    } catch (error) {
+      mcpLogger.error('Failed to initialize Supabase MCP server', {
+        error: error instanceof Error ? error.message : String(error),
+        server_id: this.supabaseServerId,
+      });
+
+      // Don't throw error for Supabase server failure - continue with other servers
+      mcpLogger.warn('Continuing initialization without Supabase server');
+    }
+  }
+
+  /**
+   * Initialize dynamic servers from configuration files
+   */
+  private async initializeDynamicServers(): Promise<void> {
+    mcpLogger.info('Initializing dynamic MCP servers from configuration');
+
+    try {
+      // Load mcp.json configuration if it exists
+      const mcpJsonConfig = await this.loadMcpJsonConfig(this.options.configPath);
+      
+      if (!mcpJsonConfig) {
+        mcpLogger.info('No mcp.json configuration found, skipping dynamic servers');
+        return;
+      }
+
+      // Convert mcp.json format to resolved config format
+      const resolvedConfigs: ResolvedMCPServerConfig[] = [];
+      
+      for (const [serverId, serverConfig] of Object.entries(mcpJsonConfig.mcpServers)) {
+        if (!serverConfig.enabled) {
+          mcpLogger.info('Skipping disabled server', { server_id: serverId });
+          continue;
+        }
+
+        const resolvedConfig = this.convertMcpJsonToResolvedConfig(serverId, serverConfig);
+        resolvedConfigs.push(resolvedConfig);
+      }
+
+      mcpLogger.info('Processed dynamic server configurations', {
+        total_servers: Object.keys(mcpJsonConfig.mcpServers).length,
+        enabled_servers: resolvedConfigs.length,
+      });
+
+      // Connect to all enabled servers
+      const connectionPromises = resolvedConfigs.map(async (config) => {
+        try {
+          mcpLogger.info('Connecting to dynamic MCP server', {
+            server_id: config.id,
+            command: config.command,
+            args: config.args,
+          });
+
+          // Register the server configuration
+          await mcpConfigLoader.registerHardcodedServer(config.id, config);
+          
+          // Connect using Mastra MCP client
+          await mastraMCPClientManager.connectToServer(config.id);
+
+          mcpLogger.info('Dynamic MCP server connected successfully', {
+            server_id: config.id,
+          });
+
+        } catch (error) {
+          mcpLogger.error('Failed to connect to dynamic MCP server', {
+            server_id: config.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      });
+
+      await Promise.all(connectionPromises);
+
+      mcpLogger.info('Dynamic MCP servers initialization completed');
+
+    } catch (error) {
+      mcpLogger.error('Failed to initialize dynamic MCP servers', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Don't throw - continue with just hardcoded servers
+    }
+  }
+
+  /**
+   * Load mcp.json configuration file
+   */
+  private async loadMcpJsonConfig(configPath: string): Promise<MCPJsonConfig | null> {
+    try {
+      await access(configPath);
+      const content = await readFile(configPath, 'utf-8');
+      const rawData = JSON.parse(content);
+      
+      const validationResult = MCPJsonConfigSchema.safeParse(rawData);
+      if (!validationResult.success) {
+        mcpLogger.error('Invalid mcp.json configuration', {
+          config_path: configPath,
+          errors: validationResult.error.issues,
+        });
+        return null;
+      }
+
+      return validationResult.data;
+
+    } catch (error) {
+      if ((error as any).code === 'ENOENT') {
+        mcpLogger.info('mcp.json configuration file not found', { config_path: configPath });
+        return null;
+      }
+      
+      mcpLogger.error('Failed to load mcp.json configuration', {
+        config_path: configPath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Convert mcp.json server config to resolved config format
+   */
+  private convertMcpJsonToResolvedConfig(
+    serverId: string, 
+    serverConfig: MCPJsonServerConfig
+  ): ResolvedMCPServerConfig {
+    // Resolve environment variables in the configuration
+    const resolvedEnv = this.resolveEnvironmentVariables(serverConfig.env || {});
+    const resolvedCommand = this.substituteEnvironmentVariables(serverConfig.command, resolvedEnv);
+
+    return {
+      id: serverId,
+      name: serverConfig.description || serverId,
+      command: serverConfig.command,
+      args: serverConfig.args || [],
+      env: serverConfig.env || {},
+      resolvedCommand,
+      resolvedCwd: process.cwd(),
+      resolvedEnv: {
+        ...resolvedEnv,
+        MCP_SERVER_ID: serverId,
+      },
+      timeout: serverConfig.timeout || 30000,
+      restart: serverConfig.restart !== false,
+      maxRestarts: serverConfig.maxRestarts || 5,
+      restartDelay: serverConfig.restartDelay || 1000,
+      enabled: serverConfig.enabled !== false,
+      categories: serverConfig.categories || [],
+      description: serverConfig.description,
+      metadata: {
+        ...serverConfig.metadata,
+        fromMcpJson: true,
+      },
+    };
+  }
+
+  /**
+   * Resolve environment variables in configuration values
+   */
+  private resolveEnvironmentVariables(
+    obj: Record<string, string>
+  ): Record<string, string> {
+    const resolved: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(obj)) {
+      resolved[key] = this.substituteEnvironmentVariables(value, process.env);
+    }
+
+    return resolved;
+  }
+
+  /**
+   * Substitute environment variables in a string value
+   */
+  private substituteEnvironmentVariables(
+    value: string,
+    env: Record<string, string | undefined>
+  ): string {
+    return value.replace(/\$\{([^}]+)\}/g, (match, varName) => {
+      const envValue = env[varName];
+      if (envValue === undefined) {
+        mcpLogger.warn('Environment variable not found', {
+          variable: varName,
+          match,
+        });
+        return match; // Return original if not found
+      }
+      return envValue;
+    });
+  }
+
+  /**
+   * Discover and map all tools from connected servers
+   */
+  private async discoverAllTools(): Promise<void> {
+    mcpLogger.info('Discovering tools from all connected MCP servers');
+
+    const connections = mastraMCPClientManager.getConnectedServers();
+
+    for (const connection of connections) {
+      try {
+        mcpLogger.info('Discovering and storing tools for server', {
+          server_id: connection.serverId,
+          tools_count: connection.tools.length,
+        });
+
+        // Use the tool mapper's proper discoverToolsFromServer method which handles storage
+        const mappedTools = await mcpToolMapper.discoverToolsFromServer(connection.serverId);
+
+        mcpLogger.info('Tools discovered and stored for server', {
+          server_id: connection.serverId,
+          mapped_tools_count: mappedTools.length,
+          mapped_tool_ids: mappedTools.map(t => t.id),
+        });
+
+      } catch (error) {
+        mcpLogger.error('Failed to discover tools for server', {
+          server_id: connection.serverId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const finalMappedTools = mcpToolMapper.getAllMappedTools();
+    mcpLogger.info('🔥 Tool discovery completed - FINAL CHECK', {
+      total_mapped_tools: finalMappedTools.length,
+      final_tool_ids: finalMappedTools.map(t => t.id),
+      final_tools_sample: finalMappedTools.slice(0, 5).map(t => ({
+        id: t.id,
+        serverId: t.serverId,
+        namespace: t.namespace
+      }))
+    });
+  }
+
+  /**
+   * Setup event listeners for MCP components
+   */
+  private setupEventListeners(): void {
+    // Currently no specific event listeners needed
+    // The Mastra MCP client handles its own events internally
+    mcpLogger.debug('MCP Tool Registry event listeners setup completed');
+  }
+
+  /**
+   * Convert mapped tool to playground tool format
+   */
+  private convertToPlaygroundTool(mappedTool: MappedTool): PlaygroundTool {
+    const connection = mastraMCPClientManager.getConnection(mappedTool.serverId);
+    const isAvailable = connection?.status === 'connected';
+
+    return {
+      id: mappedTool.id,
+      displayName: mappedTool.name,
+      description: mappedTool.description,
+      namespace: mappedTool.namespace,
+      category: mappedTool.metadata.category || 'general',
+      serverId: mappedTool.serverId,
+      inputSchema: mappedTool.inputSchema,
+      metadata: {
+        isAvailable,
+        executionCount: mappedTool.metadata.usage_count || 0,
+        successRate: 0, // Calculate from execution history if needed
+        averageExecutionTime: mappedTool.metadata.avg_execution_time || 0,
+        lastExecuted: undefined, // Would need to track this separately
+        tags: mappedTool.metadata.tags || [],
+      },
+    };
+  }
+
+  /**
+   * Ensure registry is initialized
+   */
+  private ensureInitialized(): void {
+    if (!this.isInitialized) {
+      throw new Error('MCP Tool Registry not initialized. Call initialize() first.');
+    }
   }
 }
 
 // Export singleton instance
 export const mcpToolRegistry = new MCPToolRegistry();
+
+// NOTE: Auto-initialization is disabled to prevent conflicts with startup sequence
+// The registry should be initialized manually via the startup sequence in src/mastra/index.ts

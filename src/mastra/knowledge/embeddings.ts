@@ -143,7 +143,7 @@ export class KnowledgeEmbeddingsService {
       // Prepare request payload for Titan v2
       const requestBody = {
         inputText: validRequest.text,
-        dimensions: 1024, // Titan v2 supports up to 1024 dimensions
+        dimensions: 1536, // Titan v2 configured for 1536 dimensions (pgvector compatibility)
         normalize: true,
       };
 
@@ -290,7 +290,7 @@ export class KnowledgeEmbeddingsService {
       averageProcessingTime,
       batchesProcessed,
       model: this.modelId,
-      dimensions: allEmbeddings[0]?.embedding.length || 1024,
+      dimensions: allEmbeddings[0]?.embedding.length || 1536,
     };
 
     knowledgeLogger.info('Batch embedding generation completed', {

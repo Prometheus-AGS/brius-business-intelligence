@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { setTimeout } from 'timers/promises';
+// Using global setTimeout instead of promises version
 import { rootLogger } from '../observability/logger.js';
 import { createMastraMCPServer, MastraMCPServerConfig } from './index.js';
 
@@ -164,7 +164,7 @@ class MCPServerIntegrationTest {
 
     // Create a promise that resolves when we receive the connected event
     const connectionPromise = new Promise<void>((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
+      const timeoutId: NodeJS.Timeout = setTimeout(() => {
         reject(new Error('SSE connection timeout'));
       }, 10000);
 
@@ -300,7 +300,7 @@ class MCPServerIntegrationTest {
     await this.runTest('Server Lifecycle (Start)', () => this.testServerLifecycle());
 
     // Add small delay to ensure server is fully ready
-    await setTimeout(1000);
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
     await this.runTest('HTTP Endpoints', () => this.testHTTPEndpoints());
     await this.runTest('SSE Connection', () => this.testSSEConnection());

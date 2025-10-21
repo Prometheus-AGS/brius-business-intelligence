@@ -2,13 +2,48 @@ import type { Tool } from '@mastra/core/tools';
 import { initializeMCPToolRegistration, getMCPTools } from '../tools/mcp-registry.js';
 import { bedrockTools } from '../tools/bedrock-tools.js';
 import type { BedrockTool } from '../types/bedrock.js';
+import { mcpToolRegistry } from '../mcp/registry.js';
+import { rootLogger } from '../observability/logger.js';
 
 let cachedToolMap: Record<string, Tool> | null = null;
+let isInitialized = false;
 
 export async function ensureMcpToolsLoaded(): Promise<void> {
-  if (cachedToolMap) return;
-  await initializeMCPToolRegistration();
-  refreshToolCache();
+  if (isInitialized) return;
+  
+  try {
+    rootLogger.info('🔥 STARTING MCP TOOLS INITIALIZATION');
+    
+    // Initialize MCP registry first
+    rootLogger.info('🔥 INITIALIZING MCP REGISTRY');
+    await mcpToolRegistry.initialize();
+    rootLogger.info('🔥 MCP REGISTRY INITIALIZED');
+    
+    // Initialize MCP tool registration manager
+    rootLogger.info('🔥 INITIALIZING MCP TOOL REGISTRATION');
+    await initializeMCPToolRegistration();
+    rootLogger.info('🔥 MCP TOOL REGISTRATION INITIALIZED');
+    
+    // Refresh tool cache
+    refreshToolCache();
+    
+    isInitialized = true;
+    rootLogger.info('🔥 MCP TOOLS INITIALIZATION COMPLETED', {
+      total_tools: cachedToolMap ? Object.keys(cachedToolMap).length : 0,
+      mcp_tools: getMCPTools().length,
+      bedrock_tools: bedrockTools.length,
+    });
+    
+  } catch (error) {
+    rootLogger.error('🔥 MCP TOOLS INITIALIZATION FAILED', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    
+    // Continue with just Bedrock tools if MCP fails
+    refreshToolCache();
+    isInitialized = true;
+  }
 }
 
 /**
@@ -25,18 +60,44 @@ function convertBedrockToolToMastraTool(bedrockTool: BedrockTool): Tool {
 }
 
 function refreshToolCache() {
-  const mcpTools = getMCPTools();
+  try {
+    // Get MCP tools from the registration manager
+    const mcpTools = getMCPTools();
+    rootLogger.info('🔥 REFRESHING TOOL CACHE', {
+      mcp_tools_count: mcpTools.length,
+      bedrock_tools_count: bedrockTools.length,
+      mcp_tool_ids: mcpTools.map(t => t.id),
+      mcp_tools_sample: mcpTools.slice(0, 3).map(t => ({ id: t.id, description: t.description })),
+    });
 
-  // Convert Bedrock tools to Mastra Tool format
-  const convertedBedrockTools = bedrockTools.map(convertBedrockToolToMastraTool);
+    // Convert Bedrock tools to Mastra Tool format
+    const convertedBedrockTools = bedrockTools.map(convertBedrockToolToMastraTool);
 
-  // Combine MCP tools and converted Bedrock tools
-  const allTools = [...mcpTools, ...convertedBedrockTools];
+    // Combine MCP tools and converted Bedrock tools
+    const allTools = [...mcpTools, ...convertedBedrockTools];
 
-  cachedToolMap = allTools.reduce<Record<string, Tool>>((acc, tool) => {
-    acc[tool.id] = tool;
-    return acc;
-  }, {});
+    cachedToolMap = allTools.reduce<Record<string, Tool>>((acc, tool) => {
+      acc[tool.id] = tool;
+      return acc;
+    }, {});
+
+    rootLogger.info('🔥 TOOL CACHE REFRESHED', {
+      total_tools: allTools.length,
+      tool_ids: allTools.map(t => t.id),
+    });
+
+  } catch (error) {
+    rootLogger.error('🔥 TOOL CACHE REFRESH FAILED', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    
+    // Fallback to just Bedrock tools
+    const convertedBedrockTools = bedrockTools.map(convertBedrockToolToMastraTool);
+    cachedToolMap = convertedBedrockTools.reduce<Record<string, Tool>>((acc, tool) => {
+      acc[tool.id] = tool;
+      return acc;
+    }, {});
+  }
 }
 
 export function getSharedToolMap(): Record<string, Tool> {
@@ -61,11 +122,54 @@ export function getToolCounts(): {
   mcp: number;
   bedrock: number;
 } {
-  const mcpTools = getMCPTools();
+  try {
+    const mcpTools = getMCPTools();
+    
+    return {
+      total: mcpTools.length + bedrockTools.length,
+      mcp: mcpTools.length,
+      bedrock: bedrockTools.length,
+    };
+  } catch (error) {
+    rootLogger.warn('🔥 FAILED TO GET TOOL COUNTS', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    
+    return {
+      total: bedrockTools.length,
+      mcp: 0,
+      bedrock: bedrockTools.length,
+    };
+  }
+}
 
-  return {
-    total: mcpTools.length + bedrockTools.length,
-    mcp: mcpTools.length,
-    bedrock: bedrockTools.length,
-  };
+/**
+ * Get all available tools for agents (includes both MCP and Bedrock tools)
+ */
+export function getAllAvailableTools(): Tool[] {
+  const toolMap = getSharedToolMap();
+  return Object.values(toolMap);
+}
+
+/**
+ * Get MCP tools specifically
+ */
+export function getMCPToolsForAgents(): Tool[] {
+  try {
+    return getMCPTools();
+  } catch (error) {
+    rootLogger.warn('🔥 FAILED TO GET MCP TOOLS FOR AGENTS', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
+/**
+ * Force refresh of tool cache (useful for testing or when tools are updated)
+ */
+export function forceRefreshTools(): void {
+  rootLogger.info('🔥 FORCING TOOL CACHE REFRESH');
+  cachedToolMap = null;
+  refreshToolCache();
 }

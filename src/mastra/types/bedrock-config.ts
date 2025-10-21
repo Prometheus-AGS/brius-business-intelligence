@@ -18,6 +18,11 @@ export interface BedrockLLMServiceConfig {
   /** Circuit breaker configuration for resilience */
   circuitBreaker: CircuitBreakerConfig;
 
+  /** Retry configuration for AWS SDK */
+  retryConfig: {
+    maxAttempts: number;
+  };
+
   /** Langfuse monitoring configuration */
   monitoring: MonitoringConfig;
 
@@ -53,8 +58,8 @@ export interface TitanConfig {
   /** Model ID for Titan v2 embeddings */
   modelId: 'amazon.titan-embed-text-v2:0';
 
-  /** Output dimensions (256, 512, or 1024) */
-  dimensions: 256 | 512 | 1024;
+  /** Output dimensions (256, 512, 1024, or 1536) */
+  dimensions: 256 | 512 | 1024 | 1536;
 
   /** Whether to normalize output vectors */
   normalize: boolean;
@@ -156,7 +161,7 @@ export const DEFAULT_BEDROCK_CONFIG: BedrockLLMServiceConfig = {
   },
   titan: {
     modelId: 'amazon.titan-embed-text-v2:0',
-    dimensions: 1024,
+    dimensions: 1536,
     normalize: true,
     timeoutMs: 10000,
     maxInputLength: 8000,
@@ -167,6 +172,9 @@ export const DEFAULT_BEDROCK_CONFIG: BedrockLLMServiceConfig = {
     maxRetries: 3,
     baseDelayMs: 1000,
     maxDelayMs: 30000,
+  },
+  retryConfig: {
+    maxAttempts: 3,
   },
   monitoring: {
     enabled: true,

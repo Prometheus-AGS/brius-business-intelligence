@@ -5,7 +5,7 @@
 
 import { withErrorHandling } from '../../observability/error-handling.js';
 import { vectorStorage } from '../../memory/storage.js';
-import { checkDatabaseHealth, getVectorStore, getConnectionPool } from '../../config/consolidated-database.js';
+import { getConnectionPool } from '../../config/consolidated-database.js';
 import { checkEmbeddingHealth } from '../../memory/embeddings.js';
 import { knowledgeSearchService } from '../../knowledge/search.js';
 import { rootLogger } from '../../observability/logger.js';
@@ -273,6 +273,7 @@ export async function performQuickHealthCheck(): Promise<{ healthy: boolean; tim
       timestamp: new Date().toISOString(),
     };
   } catch (error) {
+    rootLogger.error('Quick health check failed', error instanceof Error ? error : new Error(String(error)));
     return {
       healthy: false,
       timestamp: new Date().toISOString(),

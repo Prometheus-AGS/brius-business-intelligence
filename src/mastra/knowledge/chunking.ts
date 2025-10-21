@@ -464,8 +464,6 @@ export class DocumentChunkingService {
       }];
     }
 
-    let lastEndIndex = 0;
-
     for (let i = 0; i < headerMatches.length; i++) {
       const match = headerMatches[i];
       const nextMatch = headerMatches[i + 1];
