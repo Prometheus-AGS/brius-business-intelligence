@@ -30,7 +30,18 @@
       "mcp__mcp-filesystem__write_file",
       "Bash(pnpm build:*)",
       "Bash(cut:*)",
-      "Bash(pnpm dev)"
+      "Bash(pnpm dev)",
+      "Bash(psql:*)",
+      "mcp__supabase-mcp-server__search_docs",
+      "Bash(pkill:*)",
+      "mcp__supabase-mcp-server__list_tables",
+      "mcp__supabase-mcp-server__execute_sql",
+      "Bash(curl -X POST http://localhost:4111/api/tools -H \"Content-Type: application/json\" -d '{\"\"tool_id\"\": \"\"supabase-list-tables\"\", \"\"arguments\"\": {\"\"schemas\"\": [\"\"public\"\"]}}')",
+      "Bash(curl -X GET http://localhost:4111/api/playground/tools -H \"Content-Type: application/json\" -s)",
+      "Bash(curl -X POST http://localhost:4111/api/playground/tools/supabase-execute-sql/execute -H \"Content-Type: application/json\" -d '{\"\"arguments\"\": {\"\"query\"\": \"\"SELECT 1 as test_result\"\"}}' -s)",
+      "Bash(curl -X GET http://localhost:4111/api/knowledge/settings -H \"Content-Type: application/json\" -s)",
+      "Bash(curl -X GET http://localhost:4111/api/ -H \"Content-Type: application/json\" -s)",
+      "Bash(curl -X GET http://localhost:4111/ -s)"
     ],
     "deny": [],
     "ask": []

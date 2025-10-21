@@ -190,7 +190,7 @@ export class MCPToolMapper {
     const finalToolId = await this.resolveNamingConflict(toolId, mcpTool.name, serverId);
 
     // Convert input schema to Zod schema
-    const inputSchema = this.convertToZodSchema(mcpTool.inputSchema);
+    const inputSchema = this.convertToZodSchema(mcpTool.inputSchema, mcpTool.name, serverId);
 
     // Enhance description if enabled
     const description = this.options.descriptionEnhancement
@@ -485,8 +485,22 @@ export class MCPToolMapper {
   /**
    * Convert MCP input schema to Zod schema
    */
-  private convertToZodSchema(inputSchema: any): z.ZodSchema {
+  private convertToZodSchema(inputSchema: any, toolName?: string, serverId?: string): z.ZodSchema {
+    // First, try to get a hardcoded schema for known tools
+    const hardcodedSchema = this.getHardcodedSchema(toolName, serverId);
+    if (hardcodedSchema) {
+      mcpLogger.info('Using hardcoded schema for tool', {
+        tool_name: toolName,
+        server_id: serverId,
+      });
+      return hardcodedSchema;
+    }
+
     if (!inputSchema) {
+      mcpLogger.warn('No input schema provided for tool, using fallback schema', {
+        tool_name: toolName,
+        server_id: serverId,
+      });
       return z.record(z.string(), z.unknown()); // Accept any object if no schema provided
     }
 
@@ -513,6 +527,8 @@ export class MCPToolMapper {
 
     } catch (error) {
       mcpLogger.warn('Failed to convert input schema to Zod', {
+        tool_name: toolName,
+        server_id: serverId,
         schema: inputSchema,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -520,6 +536,78 @@ export class MCPToolMapper {
       // Fallback to accepting any object
       return z.record(z.string(), z.unknown());
     }
+  }
+
+  /**
+   * Get hardcoded schema for known tools
+   */
+  private getHardcodedSchema(toolName?: string, serverId?: string): z.ZodSchema | null {
+    if (!toolName || !serverId) {
+      return null;
+    }
+
+    // Supabase MCP tool schemas
+    if (serverId === 'supabase-mcp') {
+      switch (toolName) {
+        case 'list_tables':
+          return z.object({
+            project_id: z.string(),
+            schemas: z.array(z.string()).optional().default(['public']),
+          });
+
+        case 'list_extensions':
+          return z.object({
+            project_id: z.string(),
+          });
+
+        case 'list_migrations':
+          return z.object({
+            project_id: z.string(),
+          });
+
+        case 'apply_migration':
+          return z.object({
+            project_id: z.string(),
+            name: z.string(),
+            query: z.string(),
+          });
+
+        case 'execute_sql':
+          return z.object({
+            project_id: z.string(),
+            query: z.string(),
+          });
+
+        case 'list_edge_functions':
+          return z.object({
+            project_id: z.string(),
+          });
+
+        case 'get_edge_function':
+          return z.object({
+            project_id: z.string(),
+            function_slug: z.string(),
+          });
+
+        case 'deploy_edge_function':
+          return z.object({
+            project_id: z.string(),
+            name: z.string(),
+            files: z.array(z.object({
+              name: z.string(),
+              content: z.string(),
+            })),
+            entrypoint_path: z.string().optional().default('index.ts'),
+            import_map_path: z.string().optional(),
+          });
+
+        default:
+          return null;
+      }
+    }
+
+    // Could add schemas for other MCP servers here in the future
+    return null;
   }
 
   /**

@@ -173,94 +173,102 @@ export const getDocumentTool = createTool({
     chunksCount: z.number(),
   }),
   execute: async ({ context }) => {
-    const { documentId, includeChunks, maxChunks } = context;
+    return await executeKnowledgeToolWithTracing(
+      'get-document',
+      'Get Document',
+      context,
+      context,
+      async () => {
+        const { documentId, includeChunks, maxChunks } = context;
 
-    knowledgeLogger.info('Agent retrieving document', {
-      agent_id: (context as any)?.metadata?.agentId || 'unknown',
-      document_id: documentId,
-      include_chunks: includeChunks,
-    });
+        knowledgeLogger.info('Agent retrieving document', {
+          agent_id: (context as any)?.metadata?.agentId || 'unknown',
+          document_id: documentId,
+          include_chunks: includeChunks,
+        });
 
-    try {
-      const connectionManager = getConnectionPool();
+        try {
+          const connectionManager = getConnectionPool();
 
-      // Get document using pgvector database
-      const documentQuery = `
-        SELECT * FROM knowledge_documents
-        WHERE id = $1
-      `;
-      const documentResult = await connectionManager.query(documentQuery, [documentId]);
+          // Get document using pgvector database
+          const documentQuery = `
+            SELECT * FROM knowledge_documents
+            WHERE id = $1
+          `;
+          const documentResult = await connectionManager.query(documentQuery, [documentId]);
 
-      if (documentResult.rows.length === 0) {
-        throw new Error('Document not found');
+          if (documentResult.rows.length === 0) {
+            throw new Error('Document not found');
+          }
+
+          const document = documentResult.rows[0];
+
+          // Check user access
+          const userId = (context as any)?.metadata?.userId || 'unknown';
+          if (userId && document.upload_user_id !== userId) {
+            throw new Error('Access denied to document');
+          }
+
+          let chunks: any[] = [];
+          let chunksCount = 0;
+
+          if (includeChunks) {
+            // Get document chunks using pgvector database
+            const chunksQuery = `
+              SELECT *
+              FROM document_chunks
+              WHERE document_id = $1
+              ORDER BY chunk_index ASC
+              LIMIT $2
+            `;
+            const chunksResult = await connectionManager.query(chunksQuery, [documentId, maxChunks]);
+
+            // Get total count
+            const countQuery = `
+              SELECT COUNT(*) as count
+              FROM document_chunks
+              WHERE document_id = $1
+            `;
+            const countResult = await connectionManager.query(countQuery, [documentId]);
+
+            chunks = chunksResult.rows;
+            chunksCount = parseInt(countResult.rows[0]?.count || '0');
+          }
+
+          knowledgeLogger.info('Document retrieved for agent', {
+            agent_id: (context as any)?.metadata?.agentId || 'unknown',
+            document_id: documentId,
+            chunks_returned: chunks.length,
+            total_chunks: chunksCount,
+          });
+
+          return {
+            document: {
+              id: document.id,
+              title: document.title,
+              originalName: document.file_path,
+              category: document.category,
+              tags: document.tags || [],
+              status: document.processing_status,
+              uploadedAt: document.created_at,
+              metadata: document.metadata || {},
+            },
+            chunks: includeChunks ? chunks.map(chunk => ({
+              id: chunk.id,
+              content: chunk.content,
+              chunkIndex: chunk.chunk_index,
+              startChar: chunk.chunk_metadata?.start_char || 0,
+              endChar: chunk.chunk_metadata?.end_char || chunk.content.length,
+            })) : undefined,
+            chunksCount,
+          };
+
+        } catch (error) {
+          knowledgeLogger.error('Document retrieval failed for agent', error instanceof Error ? error : new Error(String(error)));
+          throw new Error(`Document retrieval failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
-
-      const document = documentResult.rows[0];
-
-      // Check user access
-      const userId = (context as any)?.metadata?.userId || 'unknown';
-      if (userId && document.upload_user_id !== userId) {
-        throw new Error('Access denied to document');
-      }
-
-      let chunks: any[] = [];
-      let chunksCount = 0;
-
-      if (includeChunks) {
-        // Get document chunks using pgvector database
-        const chunksQuery = `
-          SELECT *
-          FROM document_chunks
-          WHERE document_id = $1
-          ORDER BY chunk_index ASC
-          LIMIT $2
-        `;
-        const chunksResult = await connectionManager.query(chunksQuery, [documentId, maxChunks]);
-
-        // Get total count
-        const countQuery = `
-          SELECT COUNT(*) as count
-          FROM document_chunks
-          WHERE document_id = $1
-        `;
-        const countResult = await connectionManager.query(countQuery, [documentId]);
-
-        chunks = chunksResult.rows;
-        chunksCount = parseInt(countResult.rows[0]?.count || '0');
-      }
-
-      knowledgeLogger.info('Document retrieved for agent', {
-        agent_id: (context as any)?.metadata?.agentId || 'unknown',
-        document_id: documentId,
-        chunks_returned: chunks.length,
-        total_chunks: chunksCount,
-      });
-
-      return {
-        document: {
-          id: document.id,
-          title: document.title,
-          originalName: document.file_path,
-          category: document.category,
-          tags: document.tags || [],
-          status: document.processing_status,
-          uploadedAt: document.created_at,
-          metadata: document.metadata || {},
-        },
-        chunks: includeChunks ? chunks.map(chunk => ({
-          id: chunk.id,
-          content: chunk.content,
-          chunkIndex: chunk.chunk_index,
-          startChar: chunk.chunk_metadata?.start_char || 0,
-          endChar: chunk.chunk_metadata?.end_char || chunk.content.length,
-        })) : undefined,
-        chunksCount,
-      };
-
-    } catch (error) {
-      knowledgeLogger.error('Document retrieval failed for agent', error instanceof Error ? error : new Error(String(error)));
-      throw new Error(`Document retrieval failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    );
   },
 });
 
@@ -295,92 +303,100 @@ export const findSimilarDocumentsTool = createTool({
     referenceQuery: z.string(),
   }),
   execute: async ({ context }) => {
-    const { documentId, query, maxResults, minScore, categories } = context;
+    return await executeKnowledgeToolWithTracing(
+      'find-similar-documents',
+      'Find Similar Documents',
+      context,
+      context,
+      async () => {
+        const { documentId, query, maxResults, minScore, categories } = context;
 
-    knowledgeLogger.info('Agent finding similar documents', {
-      agent_id: (context as any)?.metadata?.agentId || 'unknown',
-      document_id: documentId,
-      query: query?.substring(0, 50),
-      max_results: maxResults,
-    });
+        knowledgeLogger.info('Agent finding similar documents', {
+          agent_id: (context as any)?.metadata?.agentId || 'unknown',
+          document_id: documentId,
+          query: query?.substring(0, 50),
+          max_results: maxResults,
+        });
 
-    try {
-      let searchQuery = query;
+        try {
+          let searchQuery = query;
 
-      // If documentId is provided, get the document to create a search query
-      if (documentId && !query) {
-        const connectionManager = getConnectionPool();
+          // If documentId is provided, get the document to create a search query
+          if (documentId && !query) {
+            const connectionManager = getConnectionPool();
 
-        const referenceDocQuery = `
-          SELECT title, category, upload_user_id
-          FROM knowledge_documents
-          WHERE id = $1
-        `;
-        const referenceDocResult = await connectionManager.query(referenceDocQuery, [documentId]);
+            const referenceDocQuery = `
+              SELECT title, category, upload_user_id
+              FROM knowledge_documents
+              WHERE id = $1
+            `;
+            const referenceDocResult = await connectionManager.query(referenceDocQuery, [documentId]);
 
-        if (referenceDocResult.rows.length === 0) {
-          throw new Error('Reference document not found');
+            if (referenceDocResult.rows.length === 0) {
+              throw new Error('Reference document not found');
+            }
+
+            const referenceDoc = referenceDocResult.rows[0];
+
+            // Check user access
+            const userId = (context as any)?.metadata?.userId || 'unknown';
+            if (userId && referenceDoc.upload_user_id !== userId) {
+              throw new Error('Access denied to reference document');
+            }
+
+            searchQuery = `${referenceDoc.title} ${referenceDoc.category || ''}`.trim();
+          }
+
+          if (!searchQuery) {
+            throw new Error('No search query available');
+          }
+
+          // Perform semantic search to find similar documents
+          const searchResults = await knowledgeSearchService.search({
+            query: searchQuery,
+            searchType: 'semantic',
+            filters: {
+              maxResults: maxResults + (documentId ? 1 : 0), // Get one extra if we need to exclude reference doc
+              minScore,
+              categories,
+              userId: (context as any)?.metadata?.userId || 'unknown',
+            },
+            rerankResults: true,
+          });
+
+          // Filter out the reference document if provided
+          const similarDocuments = searchResults.results
+            .filter(result => !documentId || result.document.id !== documentId)
+            .slice(0, maxResults)
+            .map(result => ({
+              document: {
+                id: result.document.id,
+                title: result.document.title,
+                category: result.document.category,
+                tags: result.document.tags || [],
+              },
+              score: result.score,
+              reason: `Semantic similarity score: ${(result.score * 100).toFixed(1)}%`,
+            }));
+
+          knowledgeLogger.info('Similar documents found for agent', {
+            agent_id: (context as any)?.metadata?.agentId || 'unknown',
+            reference_document_id: documentId,
+            similar_count: similarDocuments.length,
+          });
+
+          return {
+            similarDocuments,
+            totalSimilar: similarDocuments.length,
+            referenceQuery: searchQuery,
+          };
+
+        } catch (error) {
+          knowledgeLogger.error('Similar documents search failed for agent', error instanceof Error ? error : new Error(String(error)));
+          throw new Error(`Similar documents search failed: ${error instanceof Error ? error.message : String(error)}`);
         }
-
-        const referenceDoc = referenceDocResult.rows[0];
-
-        // Check user access
-        const userId = (context as any)?.metadata?.userId || 'unknown';
-        if (userId && referenceDoc.upload_user_id !== userId) {
-          throw new Error('Access denied to reference document');
-        }
-
-        searchQuery = `${referenceDoc.title} ${referenceDoc.category || ''}`.trim();
       }
-
-      if (!searchQuery) {
-        throw new Error('No search query available');
-      }
-
-      // Perform semantic search to find similar documents
-      const searchResults = await knowledgeSearchService.search({
-        query: searchQuery,
-        searchType: 'semantic',
-        filters: {
-          maxResults: maxResults + (documentId ? 1 : 0), // Get one extra if we need to exclude reference doc
-          minScore,
-          categories,
-          userId: (context as any)?.metadata?.userId || 'unknown',
-        },
-        rerankResults: true,
-      });
-
-      // Filter out the reference document if provided
-      const similarDocuments = searchResults.results
-        .filter(result => !documentId || result.document.id !== documentId)
-        .slice(0, maxResults)
-        .map(result => ({
-          document: {
-            id: result.document.id,
-            title: result.document.title,
-            category: result.document.category,
-            tags: result.document.tags || [],
-          },
-          score: result.score,
-          reason: `Semantic similarity score: ${(result.score * 100).toFixed(1)}%`,
-        }));
-
-      knowledgeLogger.info('Similar documents found for agent', {
-        agent_id: (context as any)?.metadata?.agentId || 'unknown',
-        reference_document_id: documentId,
-        similar_count: similarDocuments.length,
-      });
-
-      return {
-        similarDocuments,
-        totalSimilar: similarDocuments.length,
-        referenceQuery: searchQuery,
-      };
-
-    } catch (error) {
-      knowledgeLogger.error('Similar documents search failed for agent', error instanceof Error ? error : new Error(String(error)));
-      throw new Error(`Similar documents search failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    );
   },
 });
 
@@ -412,108 +428,116 @@ export const getKnowledgeStatsTool = createTool({
     }).optional(),
   }),
   execute: async ({ context }) => {
-    const { includeCategories, includeRecentActivity } = context;
+    return await executeKnowledgeToolWithTracing(
+      'get-knowledge-stats',
+      'Get Knowledge Stats',
+      context,
+      context,
+      async () => {
+        const { includeCategories, includeRecentActivity } = context;
 
-    knowledgeLogger.info('Agent getting knowledge base statistics', {
-      agent_id: (context as any)?.metadata?.agentId || 'unknown',
-      include_categories: includeCategories,
-      include_recent_activity: includeRecentActivity,
-    });
+        knowledgeLogger.info('Agent getting knowledge base statistics', {
+          agent_id: (context as any)?.metadata?.agentId || 'unknown',
+          include_categories: includeCategories,
+          include_recent_activity: includeRecentActivity,
+        });
 
-    try {
-      const connectionManager = getConnectionPool();
+        try {
+          const connectionManager = getConnectionPool();
 
-      // Get document counts by status using pgvector database
-      const statusCountsQuery = `
-        SELECT
-          processing_status,
-          COUNT(*) as count
-        FROM knowledge_documents
-        GROUP BY processing_status
-      `;
-      const statusCountsResult = await connectionManager.query(statusCountsQuery);
+          // Get document counts by status using pgvector database
+          const statusCountsQuery = `
+            SELECT
+              processing_status,
+              COUNT(*) as count
+            FROM knowledge_documents
+            GROUP BY processing_status
+          `;
+          const statusCountsResult = await connectionManager.query(statusCountsQuery);
 
-      const statusCounts = { completed: 0, processing: 0, failed: 0, total: 0 };
-      statusCountsResult.rows.forEach(row => {
-        const count = parseInt(row.count);
-        statusCounts.total += count;
-        if (row.processing_status === 'completed') statusCounts.completed = count;
-        else if (row.processing_status === 'processing') statusCounts.processing = count;
-        else if (row.processing_status === 'failed') statusCounts.failed = count;
-      });
+          const statusCounts = { completed: 0, processing: 0, failed: 0, total: 0 };
+          statusCountsResult.rows.forEach(row => {
+            const count = parseInt(row.count);
+            statusCounts.total += count;
+            if (row.processing_status === 'completed') statusCounts.completed = count;
+            else if (row.processing_status === 'processing') statusCounts.processing = count;
+            else if (row.processing_status === 'failed') statusCounts.failed = count;
+          });
 
-      // Get total chunks count
-      const chunksCountQuery = `SELECT COUNT(*) as count FROM document_chunks`;
-      const chunksCountResult = await connectionManager.query(chunksCountQuery);
-      const totalChunks = parseInt(chunksCountResult.rows[0]?.count || '0');
+          // Get total chunks count
+          const chunksCountQuery = `SELECT COUNT(*) as count FROM document_chunks`;
+          const chunksCountResult = await connectionManager.query(chunksCountQuery);
+          const totalChunks = parseInt(chunksCountResult.rows[0]?.count || '0');
 
-      let categories;
-      if (includeCategories) {
-        const categoriesQuery = `
-          SELECT category, COUNT(*) as count
-          FROM knowledge_documents
-          WHERE processing_status = 'completed' AND category IS NOT NULL
-          GROUP BY category
-          ORDER BY count DESC
-        `;
-        const categoriesResult = await connectionManager.query(categoriesQuery);
+          let categories: Array<{ category: string; count: number; }> | undefined;
+          if (includeCategories) {
+            const categoriesQuery = `
+              SELECT category, COUNT(*) as count
+              FROM knowledge_documents
+              WHERE processing_status = 'completed' AND category IS NOT NULL
+              GROUP BY category
+              ORDER BY count DESC
+            `;
+            const categoriesResult = await connectionManager.query(categoriesQuery);
 
-        categories = categoriesResult.rows.map(row => ({
-          category: row.category,
-          count: parseInt(row.count),
-        }));
+            categories = categoriesResult.rows.map(row => ({
+              category: row.category,
+              count: parseInt(row.count),
+            }));
+          }
+
+          let recentActivity: { documentsUploadedToday: number; documentsUploadedThisWeek: number; documentsUploadedThisMonth: number; } | undefined;
+          if (includeRecentActivity) {
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+            const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+            const activityQuery = `
+              SELECT
+                COUNT(CASE WHEN created_at >= $1 THEN 1 END) as today_count,
+                COUNT(CASE WHEN created_at >= $2 THEN 1 END) as week_count,
+                COUNT(CASE WHEN created_at >= $3 THEN 1 END) as month_count
+              FROM knowledge_documents
+            `;
+
+            const activityResult = await connectionManager.query(activityQuery, [
+              today.toISOString(),
+              weekAgo.toISOString(),
+              monthAgo.toISOString(),
+            ]);
+
+            const activityData = activityResult.rows[0];
+
+            recentActivity = {
+              documentsUploadedToday: parseInt(activityData?.today_count || '0'),
+              documentsUploadedThisWeek: parseInt(activityData?.week_count || '0'),
+              documentsUploadedThisMonth: parseInt(activityData?.month_count || '0'),
+            };
+          }
+
+          knowledgeLogger.info('Knowledge base statistics retrieved for agent', {
+            agent_id: (context as any)?.metadata?.agentId || 'unknown',
+            total_documents: statusCounts.total,
+            completed_documents: statusCounts.completed,
+          });
+
+          return {
+            totalDocuments: statusCounts.total,
+            totalChunks: totalChunks,
+            completedDocuments: statusCounts.completed,
+            processingDocuments: statusCounts.processing,
+            failedDocuments: statusCounts.failed,
+            categories,
+            recentActivity,
+          };
+
+        } catch (error) {
+          knowledgeLogger.error('Knowledge base statistics failed for agent', error instanceof Error ? error : new Error(String(error)));
+          throw new Error(`Knowledge base statistics failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
-
-      let recentActivity;
-      if (includeRecentActivity) {
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-        const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
-
-        const activityQuery = `
-          SELECT
-            COUNT(CASE WHEN created_at >= $1 THEN 1 END) as today_count,
-            COUNT(CASE WHEN created_at >= $2 THEN 1 END) as week_count,
-            COUNT(CASE WHEN created_at >= $3 THEN 1 END) as month_count
-          FROM knowledge_documents
-        `;
-
-        const activityResult = await connectionManager.query(activityQuery, [
-          today.toISOString(),
-          weekAgo.toISOString(),
-          monthAgo.toISOString(),
-        ]);
-
-        const activityData = activityResult.rows[0];
-
-        recentActivity = {
-          documentsUploadedToday: parseInt(activityData?.today_count || '0'),
-          documentsUploadedThisWeek: parseInt(activityData?.week_count || '0'),
-          documentsUploadedThisMonth: parseInt(activityData?.month_count || '0'),
-        };
-      }
-
-      knowledgeLogger.info('Knowledge base statistics retrieved for agent', {
-        agent_id: (context as any)?.metadata?.agentId || 'unknown',
-        total_documents: statusCounts.total,
-        completed_documents: statusCounts.completed,
-      });
-
-      return {
-        totalDocuments: statusCounts.total,
-        totalChunks: totalChunks,
-        completedDocuments: statusCounts.completed,
-        processingDocuments: statusCounts.processing,
-        failedDocuments: statusCounts.failed,
-        categories,
-        recentActivity,
-      };
-
-    } catch (error) {
-      knowledgeLogger.error('Knowledge base statistics failed for agent', error instanceof Error ? error : new Error(String(error)));
-      throw new Error(`Knowledge base statistics failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    );
   },
 });
 

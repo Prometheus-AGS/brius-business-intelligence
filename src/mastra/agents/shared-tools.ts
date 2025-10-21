@@ -1,6 +1,7 @@
 import type { Tool } from '@mastra/core/tools';
 import { initializeMCPToolRegistration, getMCPTools } from '../tools/mcp-registry.js';
 import { bedrockTools } from '../tools/bedrock-tools.js';
+import { supabaseTools } from '../tools/supabase-tools.js';
 import type { BedrockTool } from '../types/bedrock.js';
 import { mcpToolRegistry } from '../mcp/registry.js';
 import { rootLogger } from '../observability/logger.js';
@@ -59,22 +60,40 @@ function convertBedrockToolToMastraTool(bedrockTool: BedrockTool): Tool {
   };
 }
 
+/**
+ * Convert custom Supabase tool to Mastra Tool format
+ */
+function convertSupabaseToolToMastraTool(supabaseTool: any): Tool {
+  return {
+    id: supabaseTool.id,
+    description: supabaseTool.description,
+    inputSchema: supabaseTool.inputSchema as any,
+    execute: supabaseTool.execute as any,
+  };
+}
+
 function refreshToolCache() {
   try {
     // Get MCP tools from the registration manager
     const mcpTools = getMCPTools();
-    rootLogger.info('🔥 REFRESHING TOOL CACHE', {
-      mcp_tools_count: mcpTools.length,
-      bedrock_tools_count: bedrockTools.length,
-      mcp_tool_ids: mcpTools.map(t => t.id),
-      mcp_tools_sample: mcpTools.slice(0, 3).map(t => ({ id: t.id, description: t.description })),
-    });
 
     // Convert Bedrock tools to Mastra Tool format
     const convertedBedrockTools = bedrockTools.map(convertBedrockToolToMastraTool);
 
-    // Combine MCP tools and converted Bedrock tools
-    const allTools = [...mcpTools, ...convertedBedrockTools];
+    // Convert custom Supabase tools to Mastra Tool format
+    const convertedSupabaseTools = supabaseTools.map(convertSupabaseToolToMastraTool);
+
+    rootLogger.info('🔥 REFRESHING TOOL CACHE', {
+      mcp_tools_count: mcpTools.length,
+      bedrock_tools_count: bedrockTools.length,
+      supabase_tools_count: convertedSupabaseTools.length,
+      mcp_tool_ids: mcpTools.map(t => t.id),
+      supabase_tool_ids: convertedSupabaseTools.map(t => t.id),
+      mcp_tools_sample: mcpTools.slice(0, 3).map(t => ({ id: t.id, description: t.description })),
+    });
+
+    // Combine MCP tools, Bedrock tools, and custom Supabase tools
+    const allTools = [...mcpTools, ...convertedBedrockTools, ...convertedSupabaseTools];
 
     cachedToolMap = allTools.reduce<Record<string, Tool>>((acc, tool) => {
       acc[tool.id] = tool;
@@ -90,10 +109,13 @@ function refreshToolCache() {
     rootLogger.error('🔥 TOOL CACHE REFRESH FAILED', {
       error: error instanceof Error ? error.message : String(error),
     });
-    
-    // Fallback to just Bedrock tools
+
+    // Fallback to Bedrock tools and custom Supabase tools
     const convertedBedrockTools = bedrockTools.map(convertBedrockToolToMastraTool);
-    cachedToolMap = convertedBedrockTools.reduce<Record<string, Tool>>((acc, tool) => {
+    const convertedSupabaseTools = supabaseTools.map(convertSupabaseToolToMastraTool);
+    const fallbackTools = [...convertedBedrockTools, ...convertedSupabaseTools];
+
+    cachedToolMap = fallbackTools.reduce<Record<string, Tool>>((acc, tool) => {
       acc[tool.id] = tool;
       return acc;
     }, {});
@@ -115,30 +137,40 @@ export function getBedrockTools(): Tool[] {
 }
 
 /**
+ * Get only custom Supabase tools (converted to Mastra format)
+ */
+export function getSupabaseTools(): Tool[] {
+  return supabaseTools.map(convertSupabaseToolToMastraTool);
+}
+
+/**
  * Get tool counts by category
  */
 export function getToolCounts(): {
   total: number;
   mcp: number;
   bedrock: number;
+  supabase: number;
 } {
   try {
     const mcpTools = getMCPTools();
-    
+
     return {
-      total: mcpTools.length + bedrockTools.length,
+      total: mcpTools.length + bedrockTools.length + supabaseTools.length,
       mcp: mcpTools.length,
       bedrock: bedrockTools.length,
+      supabase: supabaseTools.length,
     };
   } catch (error) {
     rootLogger.warn('🔥 FAILED TO GET TOOL COUNTS', {
       error: error instanceof Error ? error.message : String(error),
     });
-    
+
     return {
-      total: bedrockTools.length,
+      total: bedrockTools.length + supabaseTools.length,
       mcp: 0,
       bedrock: bedrockTools.length,
+      supabase: supabaseTools.length,
     };
   }
 }

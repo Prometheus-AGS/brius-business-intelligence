@@ -48,6 +48,10 @@ const envSchema = z.object({
   SUPABASE_PROJECT_REF: z.string().optional(),
   SUPABASE_ACCESS_TOKEN: z.string().optional(),
 
+  // Supabase Direct Client Configuration
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+
   // Playground Configuration
   PLAYGROUND_ENABLED: z.string().default('true'),
   PLAYGROUND_AUTH_REQUIRED: z.string().default('false'),

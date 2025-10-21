@@ -142,7 +142,7 @@ type MCPJsonServerConfig = z.infer<typeof MCPJsonServerConfigSchema>;
 type MCPJsonConfig = z.infer<typeof MCPJsonConfigSchema>;
 
 const DEFAULT_REGISTRY_OPTIONS: Required<MCPRegistryOptions> = {
-  enableSupabaseServer: true,
+  enableSupabaseServer: false, // Disabled - using custom Supabase tools instead
   configPath: process.env.MCP_CONFIG_PATH || './mcp.json',
   autoStart: true,
   enableMonitoring: true,
