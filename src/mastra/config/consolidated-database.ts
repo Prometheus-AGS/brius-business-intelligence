@@ -201,6 +201,11 @@ export async function checkDatabaseHealth(): Promise<{
     vector: boolean;
     memory: boolean;
   };
+  tableStatus?: {
+    knowledgeProcessingJobs: boolean;
+    knowledgeDocuments: boolean;
+    documentChunks: boolean;
+  };
 }> {
   try {
     // Use the Mastra PostgresStore for health check
@@ -217,6 +222,44 @@ export async function checkDatabaseHealth(): Promise<{
     );
     console.log('pgvector extension version:', vectorResult.rows[0].extversion);
 
+    // DIAGNOSTIC: Check if critical tables exist
+    const tableChecks = await pool.query(`
+      SELECT
+        table_name,
+        EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_schema = 'public'
+          AND table_name = tables_to_check.table_name
+        ) as table_exists
+      FROM (VALUES
+        ('knowledge_processing_jobs'),
+        ('knowledge_documents'),
+        ('document_chunks')
+      ) AS tables_to_check(table_name)
+    `);
+
+    const tableStatus = {
+      knowledgeProcessingJobs: false,
+      knowledgeDocuments: false,
+      documentChunks: false,
+    };
+
+    tableChecks.rows.forEach((row: any) => {
+      switch (row.table_name) {
+        case 'knowledge_processing_jobs':
+          tableStatus.knowledgeProcessingJobs = row.table_exists;
+          break;
+        case 'knowledge_documents':
+          tableStatus.knowledgeDocuments = row.table_exists;
+          break;
+        case 'document_chunks':
+          tableStatus.documentChunks = row.table_exists;
+          break;
+      }
+    });
+
+    console.log('Database table status:', tableStatus);
+
     return {
       healthy: true,
       pgvectorVersion: vectorResult?.rows?.[0]?.extversion || 'unknown',
@@ -225,6 +268,7 @@ export async function checkDatabaseHealth(): Promise<{
         vector: Boolean(vectorStore),
         memory: Boolean(memoryStore),
       },
+      tableStatus,
     };
   } catch (error) {
     return {

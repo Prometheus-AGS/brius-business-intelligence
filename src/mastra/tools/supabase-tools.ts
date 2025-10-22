@@ -41,33 +41,72 @@ export const listTablesTools = {
   inputSchema: z.object({
     schemas: z.array(z.string()).optional().default(['public']).describe('List of schemas to include. Defaults to ["public"]'),
   }),
-  execute: async ({ schemas = ['public'] }: { schemas?: string[] }) => {
+  execute: async (args: any = {}) => {
+    const schemas = args.schemas || ['public'];
     const client = getSupabaseClient();
 
     try {
+      // Add comprehensive logging for debugging
+      console.log('🔍 [DEBUG] Starting Supabase table listing...');
+      console.log('🔍 [DEBUG] Requested schemas:', schemas);
+      console.log('🔍 [DEBUG] Environment check:');
+      console.log('  - SUPABASE_URL from env object:', env.SUPABASE_URL ? '✅ Set' : '❌ Missing');
+      console.log('  - SUPABASE_SERVICE_ROLE_KEY from env object:', env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Set' : '❌ Missing');
+      console.log('  - SUPABASE_URL from process.env:', process.env.SUPABASE_URL ? '✅ Set' : '❌ Missing');
+      console.log('  - SUPABASE_SERVICE_ROLE_KEY from process.env:', process.env.SUPABASE_SERVICE_ROLE_KEY ? '✅ Set' : '❌ Missing');
+
+      // Use the env object instead of process.env for consistency
+      const supabaseUrl = env.SUPABASE_URL;
+      const supabaseKey = env.SUPABASE_SERVICE_ROLE_KEY;
+
+      if (!supabaseUrl || !supabaseKey) {
+        throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required in environment configuration');
+      }
+
+      console.log('🔍 [DEBUG] Making request to:', `${supabaseUrl}/rest/v1/`);
+
       // Since information_schema.tables isn't accessible via PostgREST in this setup,
       // we need to get table information from the Supabase public schema directly
       // Let's try to get all tables by querying the system tables available to us
 
       // First, let's try to use a workaround by checking what tables we can access
       // We'll use the REST API to introspect the schema
-      const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1/`, {
-        method: 'GET',
-        headers: {
-          'apikey': process.env.SUPABASE_SERVICE_ROLE_KEY!,
-          'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
-          'Accept': 'application/vnd.pgrst.object+json',
-        },
+      const requestHeaders = {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+
+      console.log('🔍 [DEBUG] Request headers:', {
+        ...requestHeaders,
+        'apikey': requestHeaders.apikey ? `${requestHeaders.apikey.substring(0, 10)}...` : 'Missing',
+        'Authorization': requestHeaders.Authorization ? `Bearer ${requestHeaders.Authorization.substring(7, 17)}...` : 'Missing',
       });
 
+      const response = await fetch(`${supabaseUrl}/rest/v1/`, {
+        method: 'GET',
+        headers: requestHeaders,
+      });
+
+      console.log('🔍 [DEBUG] Response status:', response.status, response.statusText);
+      console.log('🔍 [DEBUG] Response headers:', Object.fromEntries(response.headers.entries()));
+
       if (!response.ok) {
-        throw new Error(`Failed to fetch schema info: ${response.status} ${response.statusText}`);
+        const errorText = await response.text();
+        console.log('🔍 [DEBUG] Error response body:', errorText);
+        throw new Error(`Failed to fetch schema info: ${response.status} ${response.statusText}. Response: ${errorText}`);
       }
 
       const schemaInfo = await response.text();
 
       // Parse the OpenAPI spec to extract table names
-      let tables: any[] = [];
+      type TableInfo = {
+        table_schema: string;
+        table_name: string;
+        table_type: string;
+      };
+      let tables: TableInfo[] = [];
 
       try {
         const openApiSpec = JSON.parse(schemaInfo);
@@ -133,20 +172,52 @@ export const executeSqlTool = {
   inputSchema: z.object({
     query: z.string().describe('The SQL query to execute'),
   }),
-  execute: async ({ query }: { query: string }) => {
+  execute: async (args: any) => {
     const client = getSupabaseClient();
 
     try {
+      // Handle multiple parameter patterns
+      let query: string;
+      
+      if (typeof args === 'string') {
+        query = args;
+      } else if (args && args.context && args.context.query) {
+        // Mastra agent execution context
+        query = args.context.query;
+      } else if (args && args.query) {
+        // Direct playground execution
+        query = args.query;
+      } else {
+        query = '';
+      }
+      
+      console.log('🔍 [DEBUG] Execute SQL tool called with:', {
+        args: JSON.stringify(args, null, 2).substring(0, 500) + '...',
+        extractedQuery: query,
+        argType: typeof args,
+        hasContext: !!(args && args.context),
+        contextQuery: args && args.context ? args.context.query : 'N/A',
+        directQuery: args && args.query ? args.query : 'N/A',
+      });
+
       // Ensure query parameter is defined and is a string
       if (!query || typeof query !== 'string') {
         return {
           success: false,
           error: 'Query parameter is required and must be a string',
           query: query || 'undefined',
+          debug: {
+            receivedArgs: typeof args === 'object' ? JSON.stringify(args, null, 2).substring(0, 200) : args,
+            extractedQuery: query,
+            argType: typeof args,
+            hasContext: !!(args && args.context),
+            contextQuery: args && args.context ? args.context.query : 'N/A',
+            directQuery: args && args.query ? args.query : 'N/A',
+          },
         };
       }
 
-      // Execute the SQL using exec_sql RPC function
+      // Execute the SQL using the enhanced exec_sql RPC function that returns JSON results
       const { data, error } = await client.rpc('exec_sql', {
         sql: query.trim()
       });
@@ -161,17 +232,21 @@ export const executeSqlTool = {
 
       return {
         success: true,
-        result: data || 'OK',
+        result: data,
         query: query,
-        note: 'SQL executed successfully via exec_sql RPC function',
+        note: 'SQL executed successfully via enhanced exec_sql RPC function',
       };
 
     } catch (error) {
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error),
-        query: query || 'undefined',
+        query: args?.query || 'undefined',
         note: 'Make sure the "exec_sql" RPC function is available in your Supabase project',
+        debug: {
+          receivedArgs: args,
+          errorStack: error instanceof Error ? error.stack : undefined,
+        },
       };
     }
   },
@@ -294,7 +369,8 @@ export const applyMigrationTool = {
     name: z.string().describe('The name of the migration in snake_case'),
     query: z.string().describe('The SQL migration query to apply'),
   }),
-  execute: async ({ name, query }: { name: string; query: string }) => {
+  execute: async (args: any) => {
+    const { name, query } = args;
     const client = getSupabaseClient();
 
     try {
@@ -331,26 +407,66 @@ export const applyMigrationTool = {
 };
 
 /**
- * List all Edge Functions
+ * List all Edge Functions using Supabase Management API
  */
 export const listEdgeFunctionsTool = {
   id: 'supabase-list-edge-functions',
   description: 'List all Edge Functions in the Supabase project',
   inputSchema: z.object({}),
   execute: async () => {
-    // Since we're using direct database access, Edge Functions are not accessible
-    // This would require the Supabase Management API
-    return {
-      success: false,
-      error: 'Edge Functions are not accessible via direct database connection. Use Supabase Management API instead.',
-      functions: [],
-      note: 'This tool requires Supabase Management API access, not available with direct database connection',
-    };
+    try {
+      const projectRef = env.SUPABASE_PROJECT_REF;
+      const accessToken = env.SUPABASE_ACCESS_TOKEN;
+
+      if (!projectRef || !accessToken) {
+        return {
+          success: false,
+          error: 'SUPABASE_PROJECT_REF and SUPABASE_ACCESS_TOKEN environment variables are required for Edge Functions management',
+          functions: [],
+          note: 'Configure your Supabase Management API credentials to use Edge Functions tools',
+        };
+      }
+
+      const response = await fetch(
+        `https://api.supabase.com/v1/projects/${projectRef}/functions`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return {
+          success: false,
+          error: `Failed to list Edge Functions: ${response.status} ${response.statusText}. ${errorText}`,
+          functions: [],
+        };
+      }
+
+      const functions = await response.json();
+
+      return {
+        success: true,
+        functions: functions,
+        project_ref: projectRef,
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        functions: [],
+      };
+    }
   },
 };
 
 /**
- * Get Edge Function details
+ * Get Edge Function details using Supabase Management API
  */
 export const getEdgeFunctionTool = {
   id: 'supabase-get-edge-function',
@@ -358,19 +474,62 @@ export const getEdgeFunctionTool = {
   inputSchema: z.object({
     function_slug: z.string().describe('The slug of the Edge Function'),
   }),
-  execute: async ({ function_slug }: { function_slug: string }) => {
-    // Since we're using direct database access, Edge Functions are not accessible
-    return {
-      success: false,
-      error: 'Edge Functions are not accessible via direct database connection. Use Supabase Management API instead.',
-      function_slug,
-      note: 'This tool requires Supabase Management API access, not available with direct database connection',
-    };
+  execute: async (args: any) => {
+    try {
+      const { function_slug } = args;
+      const projectRef = env.SUPABASE_PROJECT_REF;
+      const accessToken = env.SUPABASE_ACCESS_TOKEN;
+
+      if (!projectRef || !accessToken) {
+        return {
+          success: false,
+          error: 'SUPABASE_PROJECT_REF and SUPABASE_ACCESS_TOKEN environment variables are required for Edge Functions management',
+          function_slug,
+          note: 'Configure your Supabase Management API credentials to use Edge Functions tools',
+        };
+      }
+
+      const response = await fetch(
+        `https://api.supabase.com/v1/projects/${projectRef}/functions/${function_slug}`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return {
+          success: false,
+          error: `Failed to get Edge Function details: ${response.status} ${response.statusText}. ${errorText}`,
+          function_slug,
+        };
+      }
+
+      const functionDetails = await response.json();
+
+      return {
+        success: true,
+        function: functionDetails,
+        function_slug,
+        project_ref: projectRef,
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        function_slug: args?.function_slug || 'unknown',
+      };
+    }
   },
 };
 
 /**
- * Deploy Edge Function
+ * Deploy Edge Function using Supabase Management API
  */
 export const deployEdgeFunctionTool = {
   id: 'supabase-deploy-edge-function',
@@ -384,20 +543,73 @@ export const deployEdgeFunctionTool = {
     entrypoint_path: z.string().optional().default('index.ts').describe('The entrypoint file path'),
     import_map_path: z.string().optional().describe('The import map file path'),
   }),
-  execute: async ({ name, files, entrypoint_path, import_map_path }: {
-    name: string;
-    files: Array<{ name: string; content: string }>;
-    entrypoint_path?: string;
-    import_map_path?: string;
-  }) => {
-    // Since we're using direct database access, Edge Functions are not accessible
-    return {
-      success: false,
-      error: 'Edge Function deployment is not available via direct database connection. Use Supabase Management API instead.',
-      function_name: name,
-      files_count: files.length,
-      note: 'This tool requires Supabase Management API access, not available with direct database connection',
-    };
+  execute: async (args: any) => {
+    try {
+      const { name, files, entrypoint_path, import_map_path } = args;
+      const projectRef = env.SUPABASE_PROJECT_REF;
+      const accessToken = env.SUPABASE_ACCESS_TOKEN;
+
+      if (!projectRef || !accessToken) {
+        return {
+          success: false,
+          error: 'SUPABASE_PROJECT_REF and SUPABASE_ACCESS_TOKEN environment variables are required for Edge Functions management',
+          function_name: name,
+          files_count: files.length,
+          note: 'Configure your Supabase Management API credentials to use Edge Functions tools',
+        };
+      }
+
+      // Create the function body for deployment
+      const functionBody = {
+        slug: name,
+        name: name,
+        source: files.find((f: { name: string; content: string }) => f.name === entrypoint_path)?.content || files[0]?.content,
+        entrypoint_path: entrypoint_path || 'index.ts',
+        import_map_path: import_map_path,
+        verify_jwt: true,
+      };
+
+      const response = await fetch(
+        `https://api.supabase.com/v1/projects/${projectRef}/functions`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(functionBody),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return {
+          success: false,
+          error: `Failed to deploy Edge Function: ${response.status} ${response.statusText}. ${errorText}`,
+          function_name: name,
+          files_count: files.length,
+        };
+      }
+
+      const deploymentResult = await response.json();
+
+      return {
+        success: true,
+        function: deploymentResult,
+        function_name: name,
+        files_count: files.length,
+        project_ref: projectRef,
+        note: 'Edge Function deployed successfully via Supabase Management API',
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        function_name: args?.name || 'unknown',
+        files_count: args?.files?.length || 0,
+      };
+    }
   },
 };
 

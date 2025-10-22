@@ -1,5 +1,7 @@
 import { registerApiRoute } from '@mastra/core/server';
 import { z } from 'zod';
+import { readFileSync, existsSync } from 'fs';
+import { join, extname } from 'path';
 import { apiLogger } from '../../observability/logger.js';
 import { getAllAvailableTools, getToolCounts } from '../../agents/shared-tools.js';
 import { checkDatabaseHealth } from '../../config/consolidated-database.js';
@@ -471,6 +473,168 @@ export function getPlaygroundRoutes() {
               code: 'search_error',
             },
           }, 500);
+        }
+      },
+    }),
+
+    // Serve playground static files
+    registerApiRoute('/playground', {
+      method: 'GET',
+      handler: async c => {
+        try {
+          // Fix path resolution - check if we're already in .mastra/output
+          const cwd = process.cwd();
+          const isInMastraOutput = cwd.endsWith('.mastra/output');
+          const indexPath = isInMastraOutput
+            ? join(cwd, 'playground/index.html')
+            : join(cwd, '.mastra/output/playground/index.html');
+            
+          apiLogger.info('Attempting to serve playground index', {
+            indexPath,
+            exists: existsSync(indexPath),
+            cwd,
+            isInMastraOutput,
+          });
+          
+          if (existsSync(indexPath)) {
+            const content = readFileSync(indexPath, 'utf-8');
+            return c.html(content);
+          }
+          return c.text(`Playground not found at ${indexPath}`, 404);
+        } catch (error) {
+          apiLogger.error('Failed to serve playground index', error instanceof Error ? error : new Error(String(error)));
+          return c.text('Internal server error', 500);
+        }
+      },
+    }),
+
+    // Also serve at root for convenience
+    registerApiRoute('/', {
+      method: 'GET',
+      handler: async c => {
+        try {
+          // Fix path resolution - check if we're already in .mastra/output
+          const cwd = process.cwd();
+          const isInMastraOutput = cwd.endsWith('.mastra/output');
+          const indexPath = isInMastraOutput
+            ? join(cwd, 'playground/index.html')
+            : join(cwd, '.mastra/output/playground/index.html');
+            
+          if (existsSync(indexPath)) {
+            const content = readFileSync(indexPath, 'utf-8');
+            return c.html(content);
+          }
+          return c.text(`Playground not found at ${indexPath}`, 404);
+        } catch (error) {
+          apiLogger.error('Failed to serve playground index', error instanceof Error ? error : new Error(String(error)));
+          return c.text('Internal server error', 500);
+        }
+      },
+    }),
+
+    // Serve playground assets
+    registerApiRoute('/assets/*', {
+      method: 'GET',
+      handler: async c => {
+        try {
+          const assetPath = c.req.path.replace('/assets/', '');
+          const cwd = process.cwd();
+          const isInMastraOutput = cwd.endsWith('.mastra/output');
+          const fullPath = isInMastraOutput
+            ? join(cwd, 'playground/assets', assetPath)
+            : join(cwd, '.mastra/output/playground/assets', assetPath);
+          
+          if (!existsSync(fullPath)) {
+            return c.text('Asset not found', 404);
+          }
+
+          const content = readFileSync(fullPath);
+          const ext = extname(fullPath).toLowerCase();
+          
+          // Set appropriate content type
+          let contentType = 'application/octet-stream';
+          switch (ext) {
+            case '.js':
+              contentType = 'application/javascript';
+              break;
+            case '.css':
+              contentType = 'text/css';
+              break;
+            case '.png':
+              contentType = 'image/png';
+              break;
+            case '.jpg':
+            case '.jpeg':
+              contentType = 'image/jpeg';
+              break;
+            case '.svg':
+              contentType = 'image/svg+xml';
+              break;
+            case '.ico':
+              contentType = 'image/x-icon';
+              break;
+          }
+
+          return new Response(content, {
+            headers: {
+              'Content-Type': contentType,
+              'Cache-Control': 'public, max-age=31536000',
+            },
+          });
+        } catch (error) {
+          apiLogger.error('Failed to serve asset', error instanceof Error ? error : new Error(String(error)));
+          return c.text('Internal server error', 500);
+        }
+      },
+    }),
+
+    // Serve other static files (favicon, etc.)
+    registerApiRoute('/favicon.ico', {
+      method: 'GET',
+      handler: async c => {
+        try {
+          const cwd = process.cwd();
+          const isInMastraOutput = cwd.endsWith('.mastra/output');
+          const faviconPath = isInMastraOutput
+            ? join(cwd, 'playground/favicon.ico')
+            : join(cwd, '.mastra/output/playground/favicon.ico');
+          if (existsSync(faviconPath)) {
+            const content = readFileSync(faviconPath);
+            return new Response(content, {
+              headers: {
+                'Content-Type': 'image/x-icon',
+                'Cache-Control': 'public, max-age=31536000',
+              },
+            });
+          }
+          return c.text('Favicon not found', 404);
+        } catch (error) {
+          return c.text('Internal server error', 500);
+        }
+      },
+    }),
+
+    registerApiRoute('/mastra.svg', {
+      method: 'GET',
+      handler: async c => {
+        try {
+          const cwd = process.cwd();
+          const isInMastraOutput = cwd.endsWith('.mastra/output');
+          const svgPath = isInMastraOutput
+            ? join(cwd, 'playground/mastra.svg')
+            : join(cwd, '.mastra/output/playground/mastra.svg');
+          if (existsSync(svgPath)) {
+            const content = readFileSync(svgPath, 'utf-8');
+            return new Response(content, {
+              headers: {
+                'Content-Type': 'image/svg+xml',
+                'Cache-Control': 'public, max-age=31536000',
+              },
+            });
+          }
+          return c.text('SVG not found', 404);
+        } catch (error) {
+          return c.text('Internal server error', 500);
         }
       },
     }),
