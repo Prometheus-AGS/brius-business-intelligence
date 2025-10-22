@@ -2,11 +2,13 @@ import type { Tool } from '@mastra/core/tools';
 import { initializeMCPToolRegistration, getMCPTools } from '../tools/mcp-registry.js';
 import { bedrockTools } from '../tools/bedrock-tools.js';
 import { supabaseTools } from '../tools/supabase-tools.js';
+import { memoryTools } from '../tools/memory-tools.js';
+import { knowledgeSearchTools } from '../tools/knowledge-search.js';
 import type { BedrockTool } from '../types/bedrock.js';
 import { mcpToolRegistry } from '../mcp/registry.js';
 import { rootLogger } from '../observability/logger.js';
 
-let cachedToolMap: Record<string, Tool> | null = null;
+let cachedToolMap: Record<string, any> | null = null;
 let isInitialized = false;
 
 export async function ensureMcpToolsLoaded(): Promise<void> {
@@ -87,15 +89,19 @@ function refreshToolCache() {
       mcp_tools_count: mcpTools.length,
       bedrock_tools_count: bedrockTools.length,
       supabase_tools_count: convertedSupabaseTools.length,
+      memory_tools_count: memoryTools.length,
+      knowledge_tools_count: knowledgeSearchTools.length,
       mcp_tool_ids: mcpTools.map(t => t.id),
       supabase_tool_ids: convertedSupabaseTools.map(t => t.id),
+      memory_tool_ids: memoryTools.map(t => t.id),
+      knowledge_tool_ids: knowledgeSearchTools.map(t => t.id),
       mcp_tools_sample: mcpTools.slice(0, 3).map(t => ({ id: t.id, description: t.description })),
     });
 
-    // Combine MCP tools, Bedrock tools, and custom Supabase tools
-    const allTools = [...mcpTools, ...convertedBedrockTools, ...convertedSupabaseTools];
+    // Combine MCP tools, Bedrock tools, custom Supabase tools, memory tools, and knowledge search tools
+    const allTools = [...mcpTools, ...convertedBedrockTools, ...convertedSupabaseTools, ...memoryTools, ...knowledgeSearchTools];
 
-    cachedToolMap = allTools.reduce<Record<string, Tool>>((acc, tool) => {
+    cachedToolMap = allTools.reduce<Record<string, any>>((acc, tool) => {
       acc[tool.id] = tool;
       return acc;
     }, {});
@@ -110,19 +116,19 @@ function refreshToolCache() {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    // Fallback to Bedrock tools and custom Supabase tools
+    // Fallback to Bedrock tools, custom Supabase tools, memory tools, and knowledge search tools
     const convertedBedrockTools = bedrockTools.map(convertBedrockToolToMastraTool);
     const convertedSupabaseTools = supabaseTools.map(convertSupabaseToolToMastraTool);
-    const fallbackTools = [...convertedBedrockTools, ...convertedSupabaseTools];
+    const fallbackTools = [...convertedBedrockTools, ...convertedSupabaseTools, ...memoryTools, ...knowledgeSearchTools];
 
-    cachedToolMap = fallbackTools.reduce<Record<string, Tool>>((acc, tool) => {
+    cachedToolMap = fallbackTools.reduce<Record<string, any>>((acc, tool) => {
       acc[tool.id] = tool;
       return acc;
     }, {});
   }
 }
 
-export function getSharedToolMap(): Record<string, Tool> {
+export function getSharedToolMap(): Record<string, any> {
   if (!cachedToolMap) {
     refreshToolCache();
   }

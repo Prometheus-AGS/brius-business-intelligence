@@ -146,7 +146,7 @@ const executeAgentStep = createStep({
       ...inputData,
       selected_agent: 'business-intelligence-agent',
       agent_response: response,
-      trace_id: response?.traceId,
+      trace_id: (response as any)?.traceId || undefined,
     };
   },
 });

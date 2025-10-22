@@ -15,11 +15,14 @@ import {
 } from './config/consolidated-database.js';
 import { businessIntelligenceAgent, executeBusinessIntelligenceAgent } from './agents/business-intelligence.js';
 import { defaultAgent, executeDefaultAgent } from './agents/default.js';
+import { orchestratorAgent, executeOrchestratorAgent } from './agents/orchestrator.js';
 import { ensureMcpToolsLoaded, getSharedToolMap, getBedrockTools, getToolCounts, getAllAvailableTools } from './agents/shared-tools.js';
 import { intentClassifierWorkflow } from './workflows/intent-classifier.js';
 import { defaultOrchestrationWorkflow, executeDefaultOrchestration } from './workflows/default-orchestration.js';
 import { businessIntelligenceOrchestrationWorkflow, executeBusinessIntelligenceOrchestration } from './workflows/business-intelligence-orchestration.js';
 import { planningWorkflow, executePlanning } from './workflows/planning.js';
+import { businessIntelligencePlannerWorkflow, executeBusinessIntelligencePlanner } from './workflows/business-intelligence-planner.js';
+import { businessIntelligenceExecutorWorkflow, executeBusinessIntelligenceExecutor } from './workflows/business-intelligence-executor.js';
 import { rootLogger } from './observability/logger.js';
 import { getKnowledgeRoutes } from './api/routes/knowledge.js';
 import { getPlaygroundRoutes } from './api/routes/playground.js';
@@ -158,6 +161,7 @@ async function createMastraInstance() {
 
     mastraInstance = new Mastra({
       agents: {
+        [orchestratorAgent.name]: orchestratorAgent,
         [businessIntelligenceAgent.name]: businessIntelligenceAgent,
         [defaultAgent.name]: defaultAgent,
       },
@@ -166,6 +170,8 @@ async function createMastraInstance() {
         [defaultOrchestrationWorkflow.id]: defaultOrchestrationWorkflow,
         [businessIntelligenceOrchestrationWorkflow.id]: businessIntelligenceOrchestrationWorkflow,
         [planningWorkflow.id]: planningWorkflow,
+        [businessIntelligencePlannerWorkflow.id]: businessIntelligencePlannerWorkflow,
+        [businessIntelligenceExecutorWorkflow.id]: businessIntelligenceExecutorWorkflow,
       },
       // No 'tools' property - tools are configured at agent level
       storage: getPostgresStore(),
@@ -292,6 +298,7 @@ rootLogger.info('🚀 MASTRA INITIALIZED', {
 
 // Legacy exports for backward compatibility
 export const agents = {
+  [orchestratorAgent.name]: orchestratorAgent,
   [businessIntelligenceAgent.name]: businessIntelligenceAgent,
   [defaultAgent.name]: defaultAgent,
 };
@@ -301,11 +308,14 @@ export const workflows = {
   [defaultOrchestrationWorkflow.id]: defaultOrchestrationWorkflow,
   [businessIntelligenceOrchestrationWorkflow.id]: businessIntelligenceOrchestrationWorkflow,
   [planningWorkflow.id]: planningWorkflow,
+  [businessIntelligencePlannerWorkflow.id]: businessIntelligencePlannerWorkflow,
+  [businessIntelligenceExecutorWorkflow.id]: businessIntelligenceExecutorWorkflow,
 };
 
 // Function exports
-export { executeBusinessIntelligenceAgent, executeDefaultAgent };
+export { executeOrchestratorAgent, executeBusinessIntelligenceAgent, executeDefaultAgent };
 export { executeDefaultOrchestration, executeBusinessIntelligenceOrchestration, executePlanning };
+export { executeBusinessIntelligencePlanner, executeBusinessIntelligenceExecutor };
 export { ensureMcpToolsLoaded, getSharedToolMap, getBedrockTools, getToolCounts, getAllAvailableTools };
 
 // MCP exports for external access

@@ -254,3 +254,178 @@ export interface WorkflowIntentClassification {
 }
 
 export type WorkflowMetrics = z.infer<typeof WorkflowMetricsSchema>;
+
+// Business Intelligence Planner-Executor Pattern Schemas
+export const BusinessIntelligencePlannerInputSchema = z.object({
+  query: z.string().min(1),
+  user_id: z.string().optional(),
+  conversation_id: z.string().optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
+  knowledge_context: z.array(KnowledgeContextSchema).optional(),
+  memory_context: z.array(MemoryContextSchema).optional(),
+  available_tools: z.array(z.string()).optional(),
+  constraints: z
+    .object({
+      max_execution_time_ms: z.number().int().positive().optional(),
+      max_tool_calls: z.number().int().positive().optional(),
+      required_confidence_threshold: z.number().min(0).max(1).optional(),
+      preferred_data_sources: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+
+export const DataRequirementSchema = z.object({
+  source: z.string(), // e.g., "supabase-table", "knowledge-base", "external-api"
+  type: z.enum(['database_query', 'semantic_search', 'api_call', 'tool_execution']),
+  parameters: z.record(z.string(), z.unknown()),
+  description: z.string(),
+  priority: z.enum(['critical', 'important', 'optional']).default('important'),
+  expected_format: z.string().optional(),
+});
+
+export const AnalysisStepSchema = z.object({
+  step_id: z.string(),
+  step_type: z.enum(['data_collection', 'data_processing', 'analysis', 'synthesis', 'validation']),
+  description: z.string(),
+  tool_calls: z.array(z.object({
+    tool_id: z.string(),
+    parameters: z.record(z.string(), z.unknown()),
+    expected_output_format: z.string().optional(),
+  })),
+  dependencies: z.array(z.string()).optional(), // step_ids this step depends on
+  success_criteria: z.string(),
+  fallback_options: z.array(z.string()).optional(),
+});
+
+export const BusinessIntelligencePlannerOutputSchema = z.object({
+  original_query: z.string(),
+  analysis_approach: z.enum(['descriptive', 'diagnostic', 'predictive', 'prescriptive']),
+  execution_plan: z.object({
+    data_requirements: z.array(DataRequirementSchema),
+    analysis_steps: z.array(AnalysisStepSchema),
+    estimated_execution_time_ms: z.number().int().positive(),
+    confidence_in_plan: z.number().min(0).max(1),
+    risk_factors: z.array(z.string()).optional(),
+  }),
+  context_summary: z.string(),
+  expected_deliverables: z.array(z.string()),
+  success_metrics: z.array(z.string()),
+  planning_metadata: z.object({
+    planning_time_ms: z.number().int().nonnegative(),
+    tools_considered: z.array(z.string()),
+    knowledge_sources_consulted: z.array(z.string()),
+    complexity_assessment: z.enum(['low', 'medium', 'high', 'very_high']),
+  }),
+});
+
+export const BusinessIntelligenceExecutorInputSchema = z.object({
+  planner_output: BusinessIntelligencePlannerOutputSchema,
+  execution_context: z.object({
+    user_id: z.string().optional(),
+    conversation_id: z.string().optional(),
+    session_id: z.string().optional(),
+    execution_start_time: z.string().datetime(),
+    timeout_ms: z.number().int().positive().optional(),
+  }),
+  runtime_adjustments: z
+    .object({
+      skip_steps: z.array(z.string()).optional(), // step_ids to skip
+      additional_constraints: z.record(z.string(), z.unknown()).optional(),
+      priority_override: z.enum(['speed', 'accuracy', 'comprehensiveness']).optional(),
+    })
+    .optional(),
+});
+
+export const ExecutionStepResultSchema = z.object({
+  step_id: z.string(),
+  status: z.enum(['completed', 'failed', 'skipped', 'partial']),
+  tool_results: z.array(z.object({
+    tool_id: z.string(),
+    input: z.record(z.string(), z.unknown()),
+    output: z.record(z.string(), z.unknown()).optional(),
+    error: z.string().optional(),
+    execution_time_ms: z.number().int().nonnegative(),
+  })),
+  derived_insights: z.array(z.string()).optional(),
+  data_quality_score: z.number().min(0).max(1).optional(),
+  confidence_in_results: z.number().min(0).max(1).optional(),
+  next_step_recommendations: z.array(z.string()).optional(),
+});
+
+export const BusinessIntelligenceExecutorOutputSchema = z.object({
+  original_query: z.string(),
+  execution_summary: z.object({
+    total_execution_time_ms: z.number().int().nonnegative(),
+    steps_attempted: z.number().int().nonnegative(),
+    steps_completed: z.number().int().nonnegative(),
+    steps_failed: z.number().int().nonnegative(),
+    tools_executed: z.number().int().nonnegative(),
+    data_sources_accessed: z.array(z.string()),
+  }),
+  step_results: z.array(ExecutionStepResultSchema),
+  final_analysis: z.object({
+    key_findings: z.array(z.string()),
+    insights: z.array(z.string()),
+    recommendations: z.array(z.string()),
+    confidence_score: z.number().min(0).max(1),
+    data_quality_assessment: z.string(),
+    limitations: z.array(z.string()).optional(),
+  }),
+  deliverables: z.record(z.string(), z.unknown()), // structured data outputs
+  executive_summary: z.string(),
+  next_actions: z.array(z.string()).optional(),
+  metadata: z.object({
+    analysis_approach_used: z.enum(['descriptive', 'diagnostic', 'predictive', 'prescriptive']),
+    primary_data_sources: z.array(z.string()),
+    tools_effectiveness: z.record(z.string(), z.number().min(0).max(1)).optional(),
+    execution_quality_score: z.number().min(0).max(1),
+  }),
+});
+
+// Orchestrator Agent Schemas
+export const OrchestratorInputSchema = z.object({
+  query: z.string().min(1),
+  user_id: z.string().optional(),
+  conversation_id: z.string().optional(),
+  session_id: z.string().optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
+  routing_hints: z
+    .object({
+      preferred_agent: z.string().optional(),
+      complexity_override: z.enum(['force_simple', 'force_complex']).optional(),
+      bypass_classification: z.boolean().default(false),
+    })
+    .optional(),
+});
+
+export const OrchestratorOutputSchema = z.object({
+  original_query: z.string(),
+  routing_decision: z.object({
+    selected_agent: z.string(),
+    confidence: z.number().min(0).max(1),
+    reasoning: z.string(),
+    classification_details: IntentClassificationOutputSchema,
+  }),
+  agent_execution_result: z.record(z.string(), z.unknown()),
+  orchestration_metadata: z.object({
+    total_execution_time_ms: z.number().int().nonnegative(),
+    classification_time_ms: z.number().int().nonnegative(),
+    agent_execution_time_ms: z.number().int().nonnegative(),
+    routing_path: z.array(z.string()),
+  }),
+  final_response: z.string(),
+  follow_up_suggestions: z.array(z.string()).optional(),
+});
+
+// TypeScript types for the new schemas
+export type BusinessIntelligencePlannerInput = z.infer<typeof BusinessIntelligencePlannerInputSchema>;
+export type BusinessIntelligencePlannerOutput = z.infer<typeof BusinessIntelligencePlannerOutputSchema>;
+export type DataRequirement = z.infer<typeof DataRequirementSchema>;
+export type AnalysisStep = z.infer<typeof AnalysisStepSchema>;
+
+export type BusinessIntelligenceExecutorInput = z.infer<typeof BusinessIntelligenceExecutorInputSchema>;
+export type BusinessIntelligenceExecutorOutput = z.infer<typeof BusinessIntelligenceExecutorOutputSchema>;
+export type ExecutionStepResult = z.infer<typeof ExecutionStepResultSchema>;
+
+export type OrchestratorInput = z.infer<typeof OrchestratorInputSchema>;
+export type OrchestratorOutput = z.infer<typeof OrchestratorOutputSchema>;
