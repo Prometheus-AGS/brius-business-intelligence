@@ -41,7 +41,8 @@
       "Bash(curl -X POST http://localhost:4111/api/playground/tools/supabase-execute-sql/execute -H \"Content-Type: application/json\" -d '{\"\"arguments\"\": {\"\"query\"\": \"\"SELECT 1 as test_result\"\"}}' -s)",
       "Bash(curl -X GET http://localhost:4111/api/knowledge/settings -H \"Content-Type: application/json\" -s)",
       "Bash(curl -X GET http://localhost:4111/api/ -H \"Content-Type: application/json\" -s)",
-      "Bash(curl -X GET http://localhost:4111/ -s)"
+      "Bash(curl -X GET http://localhost:4111/ -s)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []
