@@ -27,6 +27,7 @@ import { businessIntelligenceExecutorWorkflow, executeBusinessIntelligenceExecut
 import { rootLogger } from './observability/logger.js';
 import { getKnowledgeRoutes } from './api/routes/knowledge.js';
 import { getPlaygroundRoutes } from './api/routes/playground.js';
+import { getHealthRoutes } from './api/routes/health.js';
 import { documentProcessingQueue } from './knowledge/processing-queue.js';
 import { mcpToolRegistry } from './mcp/registry.js';
 import { getMCPToolRegistrationManager } from './tools/mcp-registry.js';
@@ -210,6 +211,7 @@ async function createMastraInstance() {
           },
         ],
         apiRoutes: [
+          ...getHealthRoutes(),
           ...getKnowledgeRoutes(),
           ...getPlaygroundRoutes(),
         ],
