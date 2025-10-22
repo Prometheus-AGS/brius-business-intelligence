@@ -6,6 +6,7 @@ dotenv.config();
 import { Mastra } from '@mastra/core/mastra';
 import { DefaultExporter } from '@mastra/core/ai-tracing';
 import { PinoLogger } from '@mastra/loggers';
+import cors from 'cors';
 import { env, getPort } from './config/environment.js';
 import {
   getPostgresStore,
@@ -185,6 +186,29 @@ async function createMastraInstance() {
       },
       observability: observabilityConfig,
       server: {
+        middleware: [
+          // Configure CORS to allow ALL origins, methods, and headers
+          async (c, next) => {
+            // Set CORS headers to allow all origins, methods, and headers
+            c.res.headers.set('Access-Control-Allow-Origin', '*');
+            c.res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
+            c.res.headers.set('Access-Control-Allow-Headers', '*');
+            c.res.headers.set('Access-Control-Expose-Headers', '*');
+            c.res.headers.set('Access-Control-Allow-Credentials', 'true');
+            c.res.headers.set('Access-Control-Max-Age', '86400');
+            
+            // Handle preflight OPTIONS requests
+            if (c.req.method === 'OPTIONS') {
+              return new Response(null, {
+                status: 200,
+                headers: c.res.headers,
+              });
+            }
+            
+            // Continue to next middleware
+            await next();
+          },
+        ],
         apiRoutes: [
           ...getKnowledgeRoutes(),
           ...getPlaygroundRoutes(),
