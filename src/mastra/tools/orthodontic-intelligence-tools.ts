@@ -73,8 +73,8 @@ export const ordersCommerceAnalysisTool = {
               COUNT(*) as order_count,
               SUM(amount) as total_revenue,
               AVG(amount) as avg_order_value,
-              COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_orders,
-              ROUND(COUNT(CASE WHEN status = 'completed' THEN 1 END)::numeric / COUNT(*)::numeric * 100, 2) as completion_rate
+              COUNT(CASE WHEN status = 'shipped' THEN 1 END) as completed_orders,
+              ROUND(COUNT(CASE WHEN status = 'shipped' THEN 1 END)::numeric / COUNT(*)::numeric * 100, 2) as completion_rate
             FROM orders 
             WHERE submitted_at IS NOT NULL 
               AND deleted = false
@@ -94,8 +94,8 @@ export const ordersCommerceAnalysisTool = {
               AVG(EXTRACT(EPOCH FROM (o.approved_at - o.submitted_at))/3600) as avg_approval_hours,
               AVG(EXTRACT(EPOCH FROM (o.shipped_at - o.approved_at))/24/3600) as avg_production_days,
               AVG(EXTRACT(EPOCH FROM (s.delivered_at - o.shipped_at))/24/3600) as avg_shipping_days,
-              COUNT(CASE WHEN o.status = 'completed' THEN 1 END) as completed_count,
-              ROUND(COUNT(CASE WHEN o.status = 'completed' THEN 1 END)::numeric / COUNT(*)::numeric * 100, 2) as completion_rate
+              COUNT(CASE WHEN o.status = 'shipped' THEN 1 END) as completed_count,
+              ROUND(COUNT(CASE WHEN o.status = 'shipped' THEN 1 END)::numeric / COUNT(*)::numeric * 100, 2) as completion_rate
             FROM orders o
             LEFT JOIN shipments s ON o.id = s.order_id
             WHERE o.submitted_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
@@ -212,9 +212,8 @@ export const operationsAnalysisTool = {
       switch (analysis_type) {
         case 'technician_performance':
           query = `
-            SELECT 
+            SELECT
               CONCAT(t.first_name, ' ', t.last_name) as technician_name,
-              tr.role_type,
               t.specialty,
               COUNT(tasks.id) as tasks_completed,
               AVG(tasks.quality_score) as avg_quality_score,
@@ -223,35 +222,30 @@ export const operationsAnalysisTool = {
               COUNT(CASE WHEN tasks.completed_at <= tasks.due_at THEN 1 END) as on_time_tasks,
               ROUND(COUNT(CASE WHEN tasks.completed_at <= tasks.due_at THEN 1 END)::numeric / COUNT(*)::numeric * 100, 2) as on_time_rate
             FROM technicians t
-            JOIN technician_roles tr ON t.id = tr.technician_id
             JOIN tasks ON tasks.assigned_to = t.profile_id
-            WHERE tasks.status = 'completed'
+            WHERE tasks.status::text = 'completed'
               AND tasks.completed_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
               AND t.is_active = true
-              ${technician_role ? `AND tr.role_type = '${technician_role}'` : ''}
-            GROUP BY technician_name, tr.role_type, t.specialty
+            GROUP BY technician_name, t.specialty
             ORDER BY avg_quality_score DESC, tasks_completed DESC;
           `;
           break;
 
         case 'quality_metrics':
           query = `
-            SELECT 
+            SELECT
               DATE_TRUNC('week', t.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') as week_central,
-              tr.role_type,
+              t.template_name,
               COUNT(*) as tasks_completed,
               AVG(t.quality_score) as avg_quality_score,
               COUNT(CASE WHEN t.quality_score < 70 THEN 1 END) as poor_quality_count,
               COUNT(CASE WHEN t.quality_score >= 90 THEN 1 END) as excellent_quality_count,
               ROUND(COUNT(CASE WHEN t.quality_score >= 90 THEN 1 END)::numeric / COUNT(*)::numeric * 100, 2) as excellence_rate
             FROM tasks t
-            JOIN technicians tech ON t.assigned_to = tech.profile_id
-            JOIN technician_roles tr ON tech.id = tr.technician_id
-            WHERE t.status = 'completed'
+            WHERE t.status::text = 'completed'
               AND t.completed_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
               AND t.quality_score IS NOT NULL
-              ${technician_role ? `AND tr.role_type = '${technician_role}'` : ''}
-            GROUP BY week_central, tr.role_type
+            GROUP BY week_central, t.template_name
             ORDER BY week_central DESC, excellence_rate DESC;
           `;
           break;
@@ -278,21 +272,17 @@ export const operationsAnalysisTool = {
 
         case 'capacity_planning':
           query = `
-            SELECT 
-              tr.role_type,
+            SELECT
+              t.specialty,
               COUNT(DISTINCT t.id) as active_technicians,
               COUNT(tasks.id) as total_tasks,
               AVG(EXTRACT(EPOCH FROM (tasks.completed_at - tasks.assigned_at))/3600) as avg_task_hours,
-              COUNT(tasks.id) / COUNT(DISTINCT t.id) as tasks_per_technician,
-              SUM(tmpl.estimated_duration_minutes) / 60.0 / COUNT(DISTINCT t.id) as estimated_hours_per_technician
+              ROUND(COUNT(tasks.id)::numeric / COUNT(DISTINCT t.id)::numeric, 2) as tasks_per_technician
             FROM technicians t
-            JOIN technician_roles tr ON t.id = tr.technician_id
             LEFT JOIN tasks ON tasks.assigned_to = t.profile_id
-            LEFT JOIN templates tmpl ON tasks.template_id = tmpl.id
             WHERE t.is_active = true
               AND (tasks.assigned_at IS NULL OR tasks.assigned_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}'))
-              ${technician_role ? `AND tr.role_type = '${technician_role}'` : ''}
-            GROUP BY tr.role_type
+            GROUP BY t.specialty
             ORDER BY active_technicians DESC;
           `;
           break;
@@ -361,24 +351,24 @@ export const clinicalAnalysisTool = {
       switch (analysis_type) {
         case 'treatment_outcomes':
           query = `
-            SELECT 
-              c.complexity,
-              CONCAT(dp.first_name, ' ', dp.last_name) as doctor_name,
+            SELECT
+              c.complexity::text,
+              CONCAT(p.first_name, ' ', p.last_name) as doctor_name,
               COUNT(*) as total_cases,
-              COUNT(CASE WHEN c.status = 'completed' THEN 1 END) as completed_cases,
-              ROUND(COUNT(CASE WHEN c.status = 'completed' THEN 1 END)::numeric / COUNT(*)::numeric * 100, 2) as success_rate,
+              COUNT(CASE WHEN c.status::text = 'completed' THEN 1 END) as completed_cases,
+              ROUND(COUNT(CASE WHEN c.status::text = 'completed' THEN 1 END)::numeric / COUNT(*)::numeric * 100, 2) as success_rate,
               AVG(c.actual_duration_months) as avg_actual_duration,
               AVG(c.estimated_duration_months) as avg_estimated_duration,
               COUNT(CASE WHEN c.actual_duration_months <= c.estimated_duration_months THEN 1 END) as on_schedule_count,
               COUNT(CASE WHEN c.actual_duration_months <= 12 THEN 1 END) as brius_advantage_count
             FROM cases c
             JOIN doctors d ON c.primary_doctor_id = d.id
-            JOIN profiles dp ON d.profile_id = dp.id
+            JOIN profiles p ON d.profile_id = p.id
             WHERE c.treatment_start_date >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
               AND c.treatment_start_date IS NOT NULL
-              ${complexity_filter ? `AND c.complexity = '${complexity_filter}'` : ''}
+              ${complexity_filter ? `AND c.complexity::text = '${complexity_filter}'` : ''}
               ${doctor_id ? `AND d.id = '${doctor_id}'` : ''}
-            GROUP BY c.complexity, doctor_name
+            GROUP BY c.complexity::text, doctor_name
             HAVING COUNT(*) >= 3
             ORDER BY success_rate DESC, total_cases DESC;
           `;
@@ -387,21 +377,21 @@ export const clinicalAnalysisTool = {
         case 'patient_journey':
           query = `
             WITH patient_journey AS (
-              SELECT 
+              SELECT
                 p.id as patient_id,
                 CONCAT(prof.first_name, ' ', prof.last_name) as patient_name,
-                p.status as current_status,
-                c.complexity,
+                p.status::text as current_status,
+                c.complexity::text,
                 EXTRACT(EPOCH FROM (c.diagnosis_date - c.consultation_date))/24/3600 as consultation_to_diagnosis_days,
                 EXTRACT(EPOCH FROM (c.treatment_start_date - c.diagnosis_date))/24/3600 as diagnosis_to_treatment_days,
                 c.actual_duration_months
               FROM patients p
               JOIN profiles prof ON p.profile_id = prof.id
               LEFT JOIN cases c ON p.id = c.patient_id
-              WHERE p.enrolled_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
-                ${complexity_filter ? `AND c.complexity = '${complexity_filter}'` : ''}
+              WHERE p.created_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
+                ${complexity_filter ? `AND c.complexity::text = '${complexity_filter}'` : ''}
             )
-            SELECT 
+            SELECT
               current_status,
               complexity,
               COUNT(*) as patient_count,
@@ -418,24 +408,22 @@ export const clinicalAnalysisTool = {
 
         case 'doctor_performance':
           query = `
-            SELECT 
-              CONCAT(dp.first_name, ' ', dp.last_name) as doctor_name,
+            SELECT
+              CONCAT(p.first_name, ' ', p.last_name) as doctor_name,
               d.specialty,
-              d.years_experience,
               COUNT(c.id) as total_cases,
-              COUNT(CASE WHEN c.status = 'completed' THEN 1 END) as completed_cases,
+              COUNT(CASE WHEN c.status::text = 'completed' THEN 1 END) as completed_cases,
               AVG(c.actual_duration_months) as avg_treatment_duration,
-              COUNT(CASE WHEN c.complexity IN ('complex', 'comprehensive') THEN 1 END) as complex_cases,
-              COUNT(DISTINCT p.id) as unique_patients,
-              ROUND(COUNT(DISTINCT p.id)::numeric / d.max_patient_load::numeric * 100, 2) as capacity_utilization
+              COUNT(CASE WHEN c.complexity::text IN ('complex', 'comprehensive') THEN 1 END) as complex_cases,
+              COUNT(DISTINCT pat.id) as unique_patients
             FROM doctors d
-            JOIN profiles dp ON d.profile_id = dp.id
+            JOIN profiles p ON d.profile_id = p.id
             LEFT JOIN cases c ON d.id = c.primary_doctor_id
-            LEFT JOIN patients p ON c.patient_id = p.id
-            WHERE d.status = 'active'
+            LEFT JOIN patients pat ON c.patient_id = pat.id
+            WHERE d.status::text = 'active'
               AND (c.created_at IS NULL OR c.created_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}'))
               ${doctor_id ? `AND d.id = '${doctor_id}'` : ''}
-            GROUP BY doctor_name, d.specialty, d.years_experience, d.max_patient_load
+            GROUP BY doctor_name, d.specialty
             ORDER BY completed_cases DESC, avg_treatment_duration ASC;
           `;
           break;
@@ -443,23 +431,23 @@ export const clinicalAnalysisTool = {
         case 'complexity_analysis':
           query = `
             WITH treatment_performance AS (
-              SELECT 
-                c.complexity,
+              SELECT
+                c.complexity::text,
                 c.estimated_duration_months,
                 c.actual_duration_months,
-                CASE 
+                CASE
                   WHEN c.actual_duration_months <= 6 THEN 'Fast Track (≤6 months)'
                   WHEN c.actual_duration_months <= 12 THEN 'Standard Brius (6-12 months)'
                   WHEN c.actual_duration_months <= 18 THEN 'Extended (12-18 months)'
                   ELSE 'Traditional Timeline (>18 months)'
                 END as timeline_category
               FROM cases c
-              WHERE c.status = 'completed'
+              WHERE c.status::text = 'completed'
                 AND c.treatment_start_date >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
                 AND c.actual_duration_months IS NOT NULL
-                ${complexity_filter ? `AND c.complexity = '${complexity_filter}'` : ''}
+                ${complexity_filter ? `AND c.complexity::text = '${complexity_filter}'` : ''}
             )
-            SELECT 
+            SELECT
               complexity,
               timeline_category,
               COUNT(*) as case_count,
@@ -537,9 +525,9 @@ export const customerServiceAnalysisTool = {
       switch (analysis_type) {
         case 'feedback_sentiment':
           query = `
-            SELECT 
-              cf.feedback_type,
-              cf.severity,
+            SELECT
+              cf.feedback_type::text,
+              cf.severity::text,
               DATE_TRUNC('month', cf.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') as month_central,
               COUNT(*) as feedback_count,
               AVG(cf.response_time_hours) as avg_response_hours,
@@ -549,17 +537,17 @@ export const customerServiceAnalysisTool = {
               SUM(CASE WHEN cf.resulted_in_discount = true THEN cf.discount_amount ELSE 0 END) as total_discount_amount
             FROM customer_feedback cf
             WHERE cf.created_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
-              ${feedback_type ? `AND cf.feedback_type = '${feedback_type}'` : ''}
-              ${severity_filter ? `AND cf.severity = '${severity_filter}'` : ''}
-            GROUP BY cf.feedback_type, cf.severity, month_central
+              ${feedback_type ? `AND cf.feedback_type::text = '${feedback_type}'` : ''}
+              ${severity_filter ? `AND cf.severity::text = '${severity_filter}'` : ''}
+            GROUP BY cf.feedback_type::text, cf.severity::text, month_central
             ORDER BY month_central DESC, feedback_count DESC;
           `;
           break;
 
         case 'communication_effectiveness':
           query = `
-            SELECT 
-              cm.message_type,
+            SELECT
+              cm.message_type::text,
               DATE_TRUNC('week', cm.sent_at AT TIME ZONE 'UTC' AT TIME ZONE 'America/Chicago') as week_central,
               COUNT(*) as messages_sent,
               COUNT(CASE WHEN cm.read_at IS NOT NULL THEN 1 END) as messages_read,
@@ -570,27 +558,27 @@ export const customerServiceAnalysisTool = {
             FROM case_messages cm
             WHERE cm.sent_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
               AND cm.deleted = false
-            GROUP BY cm.message_type, week_central
+            GROUP BY cm.message_type::text, week_central
             ORDER BY week_central DESC, messages_sent DESC;
           `;
           break;
 
         case 'satisfaction_trends':
           query = `
-            SELECT 
-              c.status as treatment_phase,
-              c.complexity,
+            SELECT
+              c.status::text as treatment_phase,
+              c.complexity::text,
               COUNT(DISTINCT p.id) as patient_count,
               COUNT(cf.id) as feedback_count,
               AVG(CASE WHEN cf.customer_satisfied = true THEN 1 ELSE 0 END) as satisfaction_rate,
-              COUNT(CASE WHEN cf.feedback_type = 'compliment' THEN 1 END) as compliments,
-              COUNT(CASE WHEN cf.feedback_type = 'complaint' THEN 1 END) as complaints,
+              COUNT(CASE WHEN cf.feedback_type::text = 'compliment' THEN 1 END) as compliments,
+              COUNT(CASE WHEN cf.feedback_type::text = 'complaint' THEN 1 END) as complaints,
               AVG(cf.response_time_hours) as avg_response_time_hours
             FROM cases c
             JOIN patients p ON c.patient_id = p.id
             LEFT JOIN customer_feedback cf ON cf.regarding_patient_id = p.profile_id
             WHERE c.created_at >= (NOW() - INTERVAL '${timeRangeMap[time_range]}')
-            GROUP BY c.status, c.complexity
+            GROUP BY c.status::text, c.complexity::text
             ORDER BY patient_count DESC, satisfaction_rate DESC;
           `;
           break;
@@ -688,7 +676,7 @@ export const executiveDashboardTool = {
             -- Orders & Commerce
             COUNT(DISTINCT o.id) as total_orders,
             SUM(o.amount) as total_revenue,
-            COUNT(DISTINCT CASE WHEN o.status = 'completed' THEN o.id END) as completed_orders,
+            COUNT(DISTINCT CASE WHEN o.status = 'shipped' THEN o.id END) as completed_orders,
             
             -- Operations
             COUNT(DISTINCT t.id) as total_tasks,

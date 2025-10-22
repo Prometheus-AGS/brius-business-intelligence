@@ -1,0 +1,15 @@
+{
+    "mcpServers": {
+        "brius-supabase": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-postgres",
+                "postgresql://postgres:P%40n%40m3r%40%21@db.gyyottknjakkagswebwh.supabase.co:5432/postgres"
+            ],
+            "alwaysAllow": [
+                "query"
+            ]
+        }
+    }
+}
