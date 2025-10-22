@@ -131,10 +131,8 @@ export const listTablesTools = {
         // Try to use exec_sql to create a function that returns table info, but since it only returns 'OK',
         // we'll need to provide a hardcoded response for common tables that might exist
         const commonTables = [
-          { table_schema: 'public', table_name: 'users', table_type: 'BASE TABLE' },
-          { table_schema: 'public', table_name: 'profiles', table_type: 'BASE TABLE' },
-          { table_schema: 'public', table_name: 'posts', table_type: 'BASE TABLE' },
-          // Add more common table names as needed
+          // No hardcoded tables - all tables should be discovered dynamically
+          // Foreign data wrapper tables and non-native tables should not be referenced here
         ];
 
         return {
