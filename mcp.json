@@ -6,6 +6,14 @@
       "env": {},
       "description": "Sequential thinking and reasoning MCP server for step-by-step analysis",
       "enabled": true
+    },
+    "brius-postgres": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://postgres:P%40n%40m3r%40%21@db.gyyottknjakkagswebwh.supabase.co:5432/postgres"
+      ]
     }
   }
 }
