@@ -10,6 +10,7 @@ import {
   checkDatabaseHealth,
   ensureVectorIndexes
 } from './consolidated-database.js';
+import { runStartupMigrations } from './migration-runner.js';
 import { ensureMcpToolsLoaded, getSharedToolMap, getToolCounts } from '../agents/shared-tools.js';
 import { businessIntelligenceAgent } from '../agents/business-intelligence.js';
 import { defaultAgent } from '../agents/default.js';
@@ -19,6 +20,7 @@ import { businessIntelligenceOrchestrationWorkflow } from '../workflows/business
 import { planningWorkflow } from '../workflows/planning.js';
 import { rootLogger } from '../observability/logger.js';
 import { getKnowledgeRoutes } from '../api/routes/knowledge.js';
+import { getMigrationRoutes } from '../api/database/migrations.js';
 import { documentProcessingQueue } from '../knowledge/processing-queue.js';
 
 export interface StartupPhase {
@@ -89,6 +91,25 @@ export class StartupManager {
         }
       },
       {
+        name: 'database_migrations',
+        description: 'Run database migrations',
+        required: true,
+        timeout: 120000,
+        retries: 2,
+        execute: async () => {
+          const migrationResult = await runStartupMigrations();
+          if (!migrationResult.success) {
+            throw new Error(`Database migrations failed: ${migrationResult.failedMigrations} failed migrations`);
+          }
+          rootLogger.info('Database migrations completed successfully', {
+            total_migrations: migrationResult.totalMigrations,
+            executed: migrationResult.executedMigrations,
+            skipped: migrationResult.skippedMigrations,
+            duration_ms: migrationResult.totalDuration,
+          });
+        }
+      },
+      {
         name: 'vector_store',
         description: 'Initialize vector store and indexes',
         required: false,
@@ -144,8 +165,10 @@ export class StartupManager {
         retries: 1,
         execute: async () => {
           const knowledgeRoutes = getKnowledgeRoutes();
+          const migrationRoutes = getMigrationRoutes();
           rootLogger.info('API routes initialized', {
             knowledge_routes: knowledgeRoutes.length,
+            migration_routes: migrationRoutes.length,
           });
         }
       },
@@ -215,6 +238,7 @@ export class StartupManager {
       server: {
         apiRoutes: [
           ...getKnowledgeRoutes(),
+          ...getMigrationRoutes(),
         ],
       },
     });
