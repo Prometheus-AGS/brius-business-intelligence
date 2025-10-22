@@ -29,7 +29,7 @@ services:
     image: downloads.unstructured.io/unstructured-io/unstructured-api:latest
     container_name: mastra-unstructured
     ports:
-      - "8000:8000"
+      - "28000:8000"
     environment:
       - PORT=8000
       - HOST=0.0.0.0
@@ -59,8 +59,8 @@ services:
     image: minio/minio:latest
     container_name: mastra-minio
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "29000:9000"
+      - "29001:9001"
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -109,13 +109,12 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      unstructured:
-        condition: service_healthy
     ports:
-      - "4000:4000"
+      - "24000:4111"
     environment:
       # Database configuration
       DATABASE_URL: postgresql://mastra:mastra_password@postgres:5432/mastra
+      PGVECTOR_DATABASE_URL: postgresql://mastra:mastra_password@postgres:5432/mastra
       
       # AWS Bedrock configuration
       AWS_REGION: us-east-2
@@ -123,7 +122,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       
       # AI Gateway configuration
-      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY}
+      # AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY}
       
       # Langfuse configuration (UPDATED for v3)
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-default}
@@ -136,8 +135,8 @@ services:
       MASTRA_LOG_LEVEL: info
       
       # Model configuration (using AI Gateway with Bedrock)
-      BEDROCK_CLAUDE_MODEL_ID: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
-      BEDROCK_TITAN_MODEL_ID: bedrock/amazon.titan-embed-text-v2:0
+      # BEDROCK_CLAUDE_MODEL_ID: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+      # BEDROCK_TITAN_MODEL_ID: bedrock/amazon.titan-embed-text-v2:0
       
       # Unstructured.io Configuration
       UNSTRUCTURED_API_URL: http://unstructured:8000
@@ -162,12 +161,15 @@ services:
       MAX_CONCURRENT_EMBEDDINGS: 3
       EMBEDDING_MODEL: titan-v2
       EMBEDDING_DIMENSIONS: 1536
+    env_file:
+      - .env
     volumes:
       - .:/app
       - /app/node_modules
       - ./data/uploads:/app/data/uploads
     networks:
       - mastra-network
+      - supabase_default
     restart: unless-stopped
 
 volumes:
@@ -177,3 +179,5 @@ volumes:
 networks:
   mastra-network:
     driver: bridge
+  supabase_default:
+    external: true
