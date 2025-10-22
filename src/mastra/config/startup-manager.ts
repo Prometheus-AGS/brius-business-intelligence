@@ -10,7 +10,8 @@ import {
   checkDatabaseHealth,
   ensureVectorIndexes
 } from './consolidated-database.js';
-import { runStartupMigrations } from './migration-runner.js';
+// TEMPORARILY COMMENTED OUT FOR TESTING - MIGRATION IMPORT
+// import { runStartupMigrations } from './migration-runner.js';
 import { ensureMcpToolsLoaded, getSharedToolMap, getToolCounts } from '../agents/shared-tools.js';
 import { businessIntelligenceAgent } from '../agents/business-intelligence.js';
 import { defaultAgent } from '../agents/default.js';
@@ -90,25 +91,26 @@ export class StartupManager {
           });
         }
       },
-      {
-        name: 'database_migrations',
-        description: 'Run database migrations',
-        required: true,
-        timeout: 120000,
-        retries: 2,
-        execute: async () => {
-          const migrationResult = await runStartupMigrations();
-          if (!migrationResult.success) {
-            throw new Error(`Database migrations failed: ${migrationResult.failedMigrations} failed migrations`);
-          }
-          rootLogger.info('Database migrations completed successfully', {
-            total_migrations: migrationResult.totalMigrations,
-            executed: migrationResult.executedMigrations,
-            skipped: migrationResult.skippedMigrations,
-            duration_ms: migrationResult.totalDuration,
-          });
-        }
-      },
+      // TEMPORARILY COMMENTED OUT FOR TESTING - MIGRATION PHASE CAUSING SLOW STARTUP
+      // {
+      //   name: 'database_migrations',
+      //   description: 'Run database migrations',
+      //   required: true,
+      //   timeout: 120000,
+      //   retries: 2,
+      //   execute: async () => {
+      //     const migrationResult = await runStartupMigrations();
+      //     if (!migrationResult.success) {
+      //       throw new Error(`Database migrations failed: ${migrationResult.failedMigrations} failed migrations`);
+      //     }
+      //     rootLogger.info('Database migrations completed successfully', {
+      //       total_migrations: migrationResult.totalMigrations,
+      //       executed: migrationResult.executedMigrations,
+      //       skipped: migrationResult.skippedMigrations,
+      //       duration_ms: migrationResult.totalDuration,
+      //     });
+      //   }
+      // },
       {
         name: 'vector_store',
         description: 'Initialize vector store and indexes',

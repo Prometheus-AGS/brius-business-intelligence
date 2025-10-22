@@ -30,7 +30,7 @@ COPY . .
 RUN touch .env
 
 # Expose the port that Mastra dev server uses (typically 4000)
-EXPOSE 4000
+EXPOSE 4111
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
