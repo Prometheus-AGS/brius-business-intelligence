@@ -387,6 +387,3 @@ export class PGVectorStorage {
 
 // Export singleton instance for constitutional compliance
 export const vectorStorage = new PGVectorStorage();
-
-// Export class for custom implementations
-export { PGVectorStorage };

@@ -1,25 +1,24 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { mcpToolRegistry, ToolExecutionRequest } from '../../mcp/registry.js';
-import { mcpToolMapper } from '../../mcp/tool-mapper.js';
-import { mcpClient } from '../../mcp/client.js';
 import { apiLogger } from '../../observability/logger.js';
 import { APITracer } from '../../observability/tracing.js';
+import { getAllAvailableTools, getToolCounts } from '../../agents/shared-tools.js';
+import { checkDatabaseHealth } from '../../config/consolidated-database.js';
 
 /**
  * Playground API Endpoints for Tool Testing
- * Provides REST API endpoints for discovering, inspecting, and executing MCP tools
- * Enables interactive testing and exploration of available tools
+ * Provides REST API endpoints for discovering, inspecting, and executing tools
+ * Focuses on Mastra tools integration with MCP tools appearing through the shared tools system
  */
 
 // Validation schemas
 const ExecuteToolSchema = z.object({
   toolId: z.string().min(1),
-  arguments: z.record(z.any()),
+  arguments: z.record(z.string(), z.unknown()),
   metadata: z.object({
     sessionId: z.string().optional(),
     source: z.enum(['playground', 'agent', 'api']).default('playground'),
-  }).optional().default({}),
+  }).optional().default(() => ({ source: 'playground' as const })),
 });
 
 const ToolFilterSchema = z.object({
@@ -27,10 +26,98 @@ const ToolFilterSchema = z.object({
   category: z.string().optional(),
   serverId: z.string().optional(),
   isAvailable: z.boolean().optional(),
-  health: z.enum(['healthy', 'degraded', 'unavailable']).optional(),
-  tags: z.array(z.string()).optional(),
   searchQuery: z.string().optional(),
 });
+
+/**
+ * Enhanced tool information for playground display
+ */
+interface PlaygroundToolInfo {
+  id: string;
+  displayName: string;
+  description: string;
+  namespace: string;
+  category: string;
+  source: 'mastra' | 'mcp' | 'bedrock';
+  metadata: {
+    isAvailable: boolean;
+    executionCount: number;
+  };
+  inputSchema?: any;
+  outputSchema?: any;
+}
+
+/**
+ * Get tools for playground display
+ */
+function getPlaygroundTools(filters: any = {}): PlaygroundToolInfo[] {
+  const playgroundTools: PlaygroundToolInfo[] = [];
+
+  try {
+    // Get all available tools from the shared tools system
+    const allTools = getAllAvailableTools();
+    
+    for (const tool of allTools) {
+      // Determine tool source and category
+      let source: 'mastra' | 'mcp' | 'bedrock' = 'mastra';
+      let namespace = 'mastra';
+      let category = 'general';
+      
+      if (tool.id.startsWith('mcp-')) {
+        source = 'mcp';
+        namespace = 'mcp';
+        category = 'mcp-tool';
+      } else if (tool.id.includes('bedrock') || tool.id.includes('claude') || tool.id.includes('titan')) {
+        source = 'bedrock';
+        namespace = 'bedrock';
+        category = 'bedrock-tool';
+      }
+
+      const playgroundTool: PlaygroundToolInfo = {
+        id: tool.id,
+        displayName: tool.id,
+        description: tool.description || 'No description available',
+        namespace,
+        category,
+        source,
+        metadata: {
+          isAvailable: true,
+          executionCount: 0,
+        },
+        inputSchema: tool.inputSchema,
+        outputSchema: tool.outputSchema,
+      };
+
+      // Apply filters
+      if (filters.namespace && playgroundTool.namespace !== filters.namespace) {
+        continue;
+      }
+      
+      if (filters.category && playgroundTool.category !== filters.category) {
+        continue;
+      }
+      
+      if (filters.searchQuery) {
+        const query = filters.searchQuery.toLowerCase();
+        if (!playgroundTool.displayName.toLowerCase().includes(query) &&
+            !playgroundTool.description.toLowerCase().includes(query)) {
+          continue;
+        }
+      }
+
+      playgroundTools.push(playgroundTool);
+    }
+
+    return playgroundTools;
+
+  } catch (error) {
+    apiLogger.error('Failed to get playground tools', {
+      error: error instanceof Error ? error.message : String(error),
+      filters,
+    });
+    return [];
+  }
+}
 
 /**
  * Get all available tools
@@ -71,19 +158,32 @@ export async function getAllTools(req: Request, res: Response): Promise<void> {
       trace_id: tracer.getTraceId(),
     });
 
-    // Get filtered tools
-    const tools = mcpToolRegistry.getAllTools(filters);
+    // Get tools
+    const tools = getPlaygroundTools(filters);
+    const toolCounts = getToolCounts();
 
-    // Get additional metadata
-    const stats = mcpToolRegistry.getStats();
-    const namespaces = mcpToolRegistry.getNamespaces();
+    // Get namespaces
+    const namespaces = Array.from(new Set(tools.map(t => t.namespace))).map(ns => ({
+      id: ns,
+      displayName: ns,
+      description: `${ns} tools`,
+      toolCount: tools.filter(t => t.namespace === ns).length,
+    }));
 
     const response = {
       success: true,
       data: {
         tools,
         total_tools: tools.length,
-        stats,
+        stats: {
+          total: tools.length,
+          by_source: {
+            mcp: tools.filter(t => t.source === 'mcp').length,
+            bedrock: tools.filter(t => t.source === 'bedrock').length,
+            mastra: tools.filter(t => t.source === 'mastra').length,
+          },
+          tool_counts: toolCounts,
+        },
         namespaces,
         filters_applied: filters,
       },
@@ -144,7 +244,10 @@ export async function getToolById(req: Request, res: Response): Promise<void> {
       trace_id: tracer.getTraceId(),
     });
 
-    const tool = mcpToolRegistry.getTool(toolId);
+    // Find tool in playground tools
+    const allTools = getPlaygroundTools();
+    const tool = allTools.find(t => t.id === toolId);
+
     if (!tool) {
       res.status(404).json({
         error: {
@@ -157,18 +260,12 @@ export async function getToolById(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Get execution history
-    const executionHistory = mcpToolRegistry.getExecutionHistory(toolId, 10);
-
-    // Get tool examples
-    const examples = mcpToolRegistry.getToolExamples(toolId);
-
     const response = {
       success: true,
       data: {
         tool,
-        execution_history: executionHistory,
-        examples,
+        execution_history: [], // No history tracking for now
+        examples: [],
       },
       message: 'Tool retrieved successfully',
     };
@@ -179,6 +276,7 @@ export async function getToolById(req: Request, res: Response): Promise<void> {
     apiLogger.info('Tool retrieved successfully', {
       user_id: req.user?.userId,
       tool_id: toolId,
+      tool_source: tool.source,
       trace_id: tracer.getTraceId(),
     });
 
@@ -244,23 +342,43 @@ export async function executeTool(req: Request, res: Response): Promise<void> {
 
     tracer.recordValidation(true);
 
-    const executionRequest: ToolExecutionRequest = {
-      ...validationResult.data,
-      metadata: {
-        ...validationResult.data.metadata,
-        userId: req.user?.userId,
-      },
-    };
-
     apiLogger.info('Executing tool from playground', {
       user_id: req.user?.userId,
       tool_id: toolId,
-      arguments: executionRequest.arguments,
+      arguments: validationResult.data.arguments,
       trace_id: tracer.getTraceId(),
     });
 
-    // Execute the tool
-    const result = await mcpToolRegistry.executeTool(executionRequest);
+    // Find and execute the tool
+    const allTools = getAllAvailableTools();
+    const tool = allTools.find(t => t.id === toolId);
+    
+    if (!tool || !tool.execute) {
+      throw new Error(`Tool not found or not executable: ${toolId}`);
+    }
+
+    const startTime = Date.now();
+    
+    // Execute the tool - use type assertion to bypass complex context requirements for playground
+    const toolResult = await (tool.execute as any)(validationResult.data.arguments);
+    
+    const executionTime = Date.now() - startTime;
+
+    const result = {
+      id: `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      success: true,
+      result: toolResult,
+      executionTime,
+      timestamp: new Date().toISOString(),
+      toolId,
+      metadata: {
+        serverId: 'mastra',
+        toolName: toolId,
+        argumentsCount: Object.keys(validationResult.data.arguments).length,
+        source: validationResult.data.metadata?.source || 'playground',
+        userId: req.user?.userId,
+      },
+    };
 
     const response = {
       success: true,
@@ -276,7 +394,7 @@ export async function executeTool(req: Request, res: Response): Promise<void> {
       tool_id: toolId,
       execution_id: result.id,
       success: result.success,
-      execution_time_ms: result.executionTime,
+      execution_time_ms: executionTime,
       trace_id: tracer.getTraceId(),
     });
 
@@ -300,156 +418,135 @@ export async function executeTool(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * Get tool execution history
- * GET /api/playground/tools/:id/history
+ * Get playground statistics
+ * GET /api/playground/stats
  */
-export async function getToolHistory(req: Request, res: Response): Promise<void> {
-  const tracer = new APITracer(`/api/playground/tools/${req.params.id}/history`, 'GET', {
+export async function getPlaygroundStats(req: Request, res: Response): Promise<void> {
+  const tracer = new APITracer('/api/playground/stats', 'GET', {
     userId: req.user?.userId,
-    query: req.query,
   });
 
   try {
     tracer.recordAuth(Boolean(req.user), req.user?.userId);
 
-    const toolId = req.params.id;
-    if (!toolId) {
-      res.status(400).json({
-        error: {
-          message: 'Tool ID is required',
-          type: 'validation_error',
-          code: 'missing_parameter',
-        },
-      });
-      tracer.fail(new Error('Missing tool ID'), 400);
-      return;
-    }
-
-    const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
-
-    apiLogger.info('Getting tool execution history', {
+    apiLogger.info('Getting playground statistics', {
       user_id: req.user?.userId,
-      tool_id: toolId,
-      limit,
       trace_id: tracer.getTraceId(),
     });
 
-    // Check if tool exists
-    const tool = mcpToolRegistry.getTool(toolId);
-    if (!tool) {
-      res.status(404).json({
-        error: {
-          message: 'Tool not found',
-          type: 'not_found_error',
-          code: 'tool_not_found',
-        },
-      });
-      tracer.fail(new Error('Tool not found'), 404);
-      return;
-    }
+    const allTools = getPlaygroundTools();
+    const toolCounts = getToolCounts();
 
-    const history = mcpToolRegistry.getExecutionHistory(toolId, limit);
+    // Check database health
+    const dbHealth = await checkDatabaseHealth();
 
     const response = {
       success: true,
       data: {
-        tool_id: toolId,
-        tool_name: tool.displayName,
-        history,
-        total_executions: tool.metadata.executionCount,
-        success_rate: tool.metadata.successRate,
-        average_execution_time: tool.metadata.averageExecutionTime,
+        overview: {
+          total_tools: allTools.length,
+          mcp_tools: allTools.filter(t => t.source === 'mcp').length,
+          bedrock_tools: allTools.filter(t => t.source === 'bedrock').length,
+          mastra_tools: allTools.filter(t => t.source === 'mastra').length,
+          available_tools: allTools.filter(t => t.metadata.isAvailable).length,
+        },
+        tool_counts: toolCounts,
+        database: {
+          healthy: dbHealth.healthy,
+          pgvector_version: dbHealth.pgvectorVersion,
+          connection_details: dbHealth.connectionDetails,
+        },
+        by_namespace: allTools.reduce((acc, tool) => {
+          acc[tool.namespace] = (acc[tool.namespace] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
+        by_category: allTools.reduce((acc, tool) => {
+          acc[tool.category] = (acc[tool.category] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>),
       },
-      message: `Retrieved ${history.length} execution records`,
+      message: 'Playground statistics retrieved successfully',
     };
 
     tracer.complete(response);
     res.json(response);
 
-    apiLogger.info('Tool execution history retrieved', {
+    apiLogger.info('Playground statistics retrieved', {
       user_id: req.user?.userId,
-      tool_id: toolId,
-      history_count: history.length,
+      total_tools: allTools.length,
+      database_healthy: dbHealth.healthy,
       trace_id: tracer.getTraceId(),
     });
 
   } catch (error) {
-    apiLogger.error('Failed to get tool history', error instanceof Error ? error : new Error(String(error)));
+    apiLogger.error('Failed to get playground statistics', error instanceof Error ? error : new Error(String(error)));
     tracer.fail(error instanceof Error ? error : new Error(String(error)));
 
     res.status(500).json({
       error: {
-        message: 'Failed to retrieve tool history',
+        message: 'Failed to retrieve playground statistics',
         type: 'internal_server_error',
-        code: 'history_retrieval_error',
+        code: 'stats_error',
       },
     });
   }
 }
 
 /**
- * Get tools by namespace
- * GET /api/playground/namespaces/:namespace/tools
+ * Refresh tool registry
+ * POST /api/playground/refresh
  */
-export async function getToolsByNamespace(req: Request, res: Response): Promise<void> {
-  const tracer = new APITracer(`/api/playground/namespaces/${req.params.namespace}/tools`, 'GET', {
+export async function refreshToolRegistry(req: Request, res: Response): Promise<void> {
+  const tracer = new APITracer('/api/playground/refresh', 'POST', {
     userId: req.user?.userId,
   });
 
   try {
     tracer.recordAuth(Boolean(req.user), req.user?.userId);
 
-    const namespace = req.params.namespace;
-    if (!namespace) {
-      res.status(400).json({
-        error: {
-          message: 'Namespace is required',
-          type: 'validation_error',
-          code: 'missing_parameter',
-        },
-      });
-      tracer.fail(new Error('Missing namespace'), 400);
-      return;
-    }
-
-    apiLogger.info('Getting tools by namespace', {
+    apiLogger.info('Refreshing tool registry', {
       user_id: req.user?.userId,
-      namespace,
       trace_id: tracer.getTraceId(),
     });
 
-    const tools = mcpToolRegistry.getToolsByNamespace(namespace);
-    const namespaceInfo = mcpToolRegistry.getNamespaces().find(ns => ns.id === namespace);
+    // Force refresh of shared tools cache
+    const { forceRefreshTools } = await import('../../agents/shared-tools.js');
+    forceRefreshTools();
+
+    const allTools = getPlaygroundTools();
+    const toolCounts = getToolCounts();
 
     const response = {
       success: true,
       data: {
-        namespace: namespaceInfo,
-        tools,
-        tools_count: tools.length,
+        refreshed_at: new Date().toISOString(),
+        total_tools: allTools.length,
+        mcp_tools: allTools.filter(t => t.source === 'mcp').length,
+        bedrock_tools: allTools.filter(t => t.source === 'bedrock').length,
+        mastra_tools: allTools.filter(t => t.source === 'mastra').length,
+        tool_counts: toolCounts,
       },
-      message: `Retrieved ${tools.length} tools from namespace ${namespace}`,
+      message: 'Tool registry refreshed successfully',
     };
 
     tracer.complete(response);
     res.json(response);
 
-    apiLogger.info('Tools by namespace retrieved', {
+    apiLogger.info('Tool registry refreshed successfully', {
       user_id: req.user?.userId,
-      namespace,
-      tools_count: tools.length,
+      total_tools: allTools.length,
       trace_id: tracer.getTraceId(),
     });
 
   } catch (error) {
-    apiLogger.error('Failed to get tools by namespace', error instanceof Error ? error : new Error(String(error)));
+    apiLogger.error('Failed to refresh tool registry', error instanceof Error ? error : new Error(String(error)));
     tracer.fail(error instanceof Error ? error : new Error(String(error)));
 
     res.status(500).json({
       error: {
-        message: 'Failed to retrieve tools by namespace',
+        message: 'Failed to refresh tool registry',
         type: 'internal_server_error',
-        code: 'namespace_tools_error',
+        code: 'refresh_error',
       },
     });
   }
@@ -487,7 +584,7 @@ export async function searchTools(req: Request, res: Response): Promise<void> {
       trace_id: tracer.getTraceId(),
     });
 
-    const tools = mcpToolRegistry.searchTools(query);
+    const tools = getPlaygroundTools({ searchQuery: query });
 
     const response = {
       success: true,
@@ -495,6 +592,11 @@ export async function searchTools(req: Request, res: Response): Promise<void> {
         query,
         tools,
         results_count: tools.length,
+        by_source: {
+          mcp: tools.filter(t => t.source === 'mcp').length,
+          bedrock: tools.filter(t => t.source === 'bedrock').length,
+          mastra: tools.filter(t => t.source === 'mastra').length,
+        },
       },
       message: `Found ${tools.length} tools matching "${query}"`,
     };
@@ -504,7 +606,7 @@ export async function searchTools(req: Request, res: Response): Promise<void> {
 
     apiLogger.info('Tool search completed', {
       user_id: req.user?.userId,
-      query: query.substring(0, 50),
+      query: query.substring(0, 100),
       results_count: tools.length,
       trace_id: tracer.getTraceId(),
     });
@@ -518,141 +620,6 @@ export async function searchTools(req: Request, res: Response): Promise<void> {
         message: 'Failed to search tools',
         type: 'internal_server_error',
         code: 'search_error',
-      },
-    });
-  }
-}
-
-/**
- * Get playground statistics
- * GET /api/playground/stats
- */
-export async function getPlaygroundStats(req: Request, res: Response): Promise<void> {
-  const tracer = new APITracer('/api/playground/stats', 'GET', {
-    userId: req.user?.userId,
-  });
-
-  try {
-    tracer.recordAuth(Boolean(req.user), req.user?.userId);
-
-    apiLogger.info('Getting playground statistics', {
-      user_id: req.user?.userId,
-      trace_id: tracer.getTraceId(),
-    });
-
-    // Get registry stats
-    const registryStats = mcpToolRegistry.getStats();
-
-    // Get connection stats
-    const connections = mcpClient.getAllConnections();
-    const connectedServers = mcpClient.getConnectedServers();
-
-    // Get tool mapper stats
-    const allMappedTools = mcpToolMapper.getAllMappedTools();
-    const namespaces = mcpToolMapper.getAllNamespaces();
-
-    const response = {
-      success: true,
-      data: {
-        registry: registryStats,
-        connections: {
-          total_connections: connections.length,
-          connected_servers: connectedServers.length,
-          connection_details: connections.map(conn => ({
-            server_id: conn.serverId,
-            status: conn.status,
-            tools_count: conn.tools.length,
-            last_activity: conn.lastActivity,
-          })),
-        },
-        tools: {
-          total_mapped: allMappedTools.length,
-          namespaces_count: namespaces.length,
-          by_category: allMappedTools.reduce((acc, tool) => {
-            const category = tool.metadata.category || 'general';
-            acc[category] = (acc[category] || 0) + 1;
-            return acc;
-          }, {} as Record<string, number>),
-        },
-      },
-      message: 'Playground statistics retrieved successfully',
-    };
-
-    tracer.complete(response);
-    res.json(response);
-
-    apiLogger.info('Playground statistics retrieved', {
-      user_id: req.user?.userId,
-      total_tools: registryStats.totalTools,
-      connected_servers: connectedServers.length,
-      trace_id: tracer.getTraceId(),
-    });
-
-  } catch (error) {
-    apiLogger.error('Failed to get playground stats', error instanceof Error ? error : new Error(String(error)));
-    tracer.fail(error instanceof Error ? error : new Error(String(error)));
-
-    res.status(500).json({
-      error: {
-        message: 'Failed to retrieve playground statistics',
-        type: 'internal_server_error',
-        code: 'stats_error',
-      },
-    });
-  }
-}
-
-/**
- * Refresh tool registry
- * POST /api/playground/refresh
- */
-export async function refreshToolRegistry(req: Request, res: Response): Promise<void> {
-  const tracer = new APITracer('/api/playground/refresh', 'POST', {
-    userId: req.user?.userId,
-  });
-
-  try {
-    tracer.recordAuth(Boolean(req.user), req.user?.userId);
-
-    apiLogger.info('Refreshing tool registry', {
-      user_id: req.user?.userId,
-      trace_id: tracer.getTraceId(),
-    });
-
-    // Refresh the registry
-    await mcpToolRegistry.refresh();
-
-    // Get updated stats
-    const stats = mcpToolRegistry.getStats();
-
-    const response = {
-      success: true,
-      data: {
-        refreshed_at: new Date().toISOString(),
-        stats,
-      },
-      message: 'Tool registry refreshed successfully',
-    };
-
-    tracer.complete(response);
-    res.json(response);
-
-    apiLogger.info('Tool registry refreshed successfully', {
-      user_id: req.user?.userId,
-      total_tools: stats.totalTools,
-      available_tools: stats.availableTools,
-      trace_id: tracer.getTraceId(),
-    });
-
-  } catch (error) {
-    apiLogger.error('Failed to refresh tool registry', error instanceof Error ? error : new Error(String(error)));
-    tracer.fail(error instanceof Error ? error : new Error(String(error)));
-
-    res.status(500).json({
-      error: {
-        message: 'Failed to refresh tool registry',
-        type: 'internal_server_error',
-        code: 'refresh_error',
       },
     });
   }

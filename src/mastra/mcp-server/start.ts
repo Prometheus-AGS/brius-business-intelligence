@@ -161,15 +161,15 @@ function buildServerConfig(cliConfig: CLIConfig): MastraMCPServerConfig {
     },
 
     tools: {
-      enableAgents: cliConfig.enableAgents ?? (process.env.MCP_ENABLE_AGENTS === 'true') ?? baseConfig.tools?.enableAgents ?? defaultMCPServerConfig.tools!.enableAgents,
-      enableWorkflows: cliConfig.enableWorkflows ?? (process.env.MCP_ENABLE_WORKFLOWS === 'true') ?? baseConfig.tools?.enableWorkflows ?? defaultMCPServerConfig.tools!.enableWorkflows,
-      enableKnowledge: cliConfig.enableKnowledge ?? (process.env.MCP_ENABLE_KNOWLEDGE === 'true') ?? baseConfig.tools?.enableKnowledge ?? defaultMCPServerConfig.tools!.enableKnowledge,
-      enableMemory: cliConfig.enableMemory ?? (process.env.MCP_ENABLE_MEMORY === 'true') ?? baseConfig.tools?.enableMemory ?? defaultMCPServerConfig.tools!.enableMemory,
+      enableAgents: cliConfig.enableAgents ?? ((process.env.MCP_ENABLE_AGENTS === 'true') || baseConfig.tools?.enableAgents || defaultMCPServerConfig.tools!.enableAgents),
+      enableWorkflows: cliConfig.enableWorkflows ?? ((process.env.MCP_ENABLE_WORKFLOWS === 'true') || baseConfig.tools?.enableWorkflows || defaultMCPServerConfig.tools!.enableWorkflows),
+      enableKnowledge: cliConfig.enableKnowledge ?? ((process.env.MCP_ENABLE_KNOWLEDGE === 'true') || baseConfig.tools?.enableKnowledge || defaultMCPServerConfig.tools!.enableKnowledge),
+      enableMemory: cliConfig.enableMemory ?? ((process.env.MCP_ENABLE_MEMORY === 'true') || baseConfig.tools?.enableMemory || defaultMCPServerConfig.tools!.enableMemory),
       customTools: baseConfig.tools?.customTools || defaultMCPServerConfig.tools!.customTools,
     },
 
     options: {
-      enableTracing: cliConfig.enableTracing ?? (process.env.MCP_ENABLE_TRACING === 'true') ?? baseConfig.options?.enableTracing ?? defaultMCPServerConfig.options!.enableTracing,
+      enableTracing: cliConfig.enableTracing ?? ((process.env.MCP_ENABLE_TRACING === 'true') || baseConfig.options?.enableTracing || defaultMCPServerConfig.options!.enableTracing),
       logLevel: (cliConfig.logLevel as any) || (process.env.MCP_LOG_LEVEL as any) || baseConfig.options?.logLevel || defaultMCPServerConfig.options!.logLevel,
       maxRequestSize: baseConfig.options?.maxRequestSize || defaultMCPServerConfig.options!.maxRequestSize,
       requestTimeout: baseConfig.options?.requestTimeout || defaultMCPServerConfig.options!.requestTimeout,

@@ -21,7 +21,7 @@ const CaptureErrorRequestSchema = z.object({
     cause: z.any().optional(),
   }),
   context: z.object({
-    component: z.enum(['system', 'database', 'api', 'agent', 'workflow', 'tool', 'auth', 'storage', 'network']),
+    component: z.enum(['database', 'system', 'tool', 'agent', 'workflow', 'mcp']),
     operation: z.string().min(1),
     traceId: z.string().optional(),
     requestId: z.string().optional(),
@@ -65,7 +65,7 @@ const CaptureErrorRequestSchema = z.object({
     affectedUsers: z.number().optional(),
     financialImpact: z.number().optional(),
   }).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   tags: z.array(z.string()).optional(),
   severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
 });
@@ -84,7 +84,7 @@ const ErrorAnalysisRequestSchema = z.object({
 });
 
 const ErrorQuerySchema = z.object({
-  component: z.enum(['system', 'database', 'api', 'agent', 'workflow', 'tool', 'auth', 'storage', 'network']).optional(),
+  component: z.enum(['database', 'system', 'tool', 'agent', 'workflow', 'mcp']).optional(),
   operation: z.string().optional(),
   severity: z.enum(['low', 'medium', 'high', 'critical']).optional(),
   errorType: z.string().optional(),
@@ -211,7 +211,7 @@ export async function captureError(req: Request, res: Response): Promise<void> {
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -340,7 +340,7 @@ export async function captureError(req: Request, res: Response): Promise<void> {
       res.status(201).json(response);
     },
     {
-      component: 'api',
+      component: 'system',
       operation: 'capture_error',
       metadata: {
         component: req.body?.context?.component,
@@ -362,7 +362,7 @@ export async function analyzeErrors(req: Request, res: Response): Promise<void> 
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -443,7 +443,7 @@ export async function analyzeErrors(req: Request, res: Response): Promise<void> 
       res.status(200).json(response);
     },
     {
-      component: 'api',
+      component: 'system',
       operation: 'analyze_errors',
       metadata: {
         error_id: req.body?.errorId,
@@ -489,7 +489,7 @@ export async function getError(req: Request, res: Response): Promise<void> {
       });
     },
     {
-      component: 'api',
+      component: 'system',
       operation: 'get_error',
       metadata: {
         error_id: req.params.errorId,
@@ -510,7 +510,7 @@ export async function listErrors(req: Request, res: Response): Promise<void> {
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid query parameters',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -535,7 +535,7 @@ export async function listErrors(req: Request, res: Response): Promise<void> {
       });
     },
     {
-      component: 'api',
+      component: 'system',
       operation: 'list_errors',
       metadata: {
         request_id: req.headers['x-request-id'],
@@ -591,7 +591,7 @@ export async function getErrorStats(req: Request, res: Response): Promise<void> 
       res.status(200).json(response);
     },
     {
-      component: 'api',
+      component: 'system',
       operation: 'get_error_stats',
       metadata: {
         request_id: req.headers['x-request-id'],
@@ -611,7 +611,7 @@ export async function resolveError(req: Request, res: Response): Promise<void> {
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -650,7 +650,7 @@ export async function resolveError(req: Request, res: Response): Promise<void> {
       });
     },
     {
-      component: 'api',
+      component: 'system',
       operation: 'resolve_error',
       metadata: {
         error_id: req.body?.errorId,
@@ -673,7 +673,7 @@ export async function bulkErrorOperations(req: Request, res: Response): Promise<
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -776,7 +776,7 @@ export async function bulkErrorOperations(req: Request, res: Response): Promise<
       });
     },
     {
-      component: 'api',
+      component: 'system',
       operation: 'bulk_error_operations',
       metadata: {
         operations_count: req.body?.error_operations?.length,
@@ -820,7 +820,7 @@ export async function errorTrackingHealthCheck(req: Request, res: Response): Pro
       res.status(statusCode).json(health);
     },
     {
-      component: 'api',
+      component: 'system',
       operation: 'error_tracking_health_check',
       metadata: {
         request_id: req.headers['x-request-id'],
@@ -857,7 +857,8 @@ export function errorTrackingApiErrorHandler(err: any, req: Request, res: Respon
   const errorId = crypto.randomUUID();
 
   // Track the API error (avoiding infinite recursion by using direct logging)
-  rootLogger.error('Error tracking API error', err, {
+  rootLogger.error('Error tracking API error', {
+    error: err,
     error_id: errorId,
     method: req.method,
     path: req.path,

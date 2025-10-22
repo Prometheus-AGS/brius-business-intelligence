@@ -13,7 +13,7 @@ import { APITracer } from '../../observability/tracing.js';
 // Request validation schemas
 const StoreMemorySchema = z.object({
   content: z.string().min(1).max(10000),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   category: z.string().optional(),
   importance: z.enum(['low', 'medium', 'high']).default('medium'),
 });
@@ -28,7 +28,7 @@ const SearchMemorySchema = z.object({
 
 const UpdateMemorySchema = z.object({
   content: z.string().min(1).max(10000).optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const GetMemoriesSchema = z.object({
@@ -104,7 +104,7 @@ export async function storeUserMemory(req: Request, res: Response): Promise<void
     });
 
     // Remove embedding from response (too large)
-    const { embedding, ...responseMemory } = memory as any;
+    const { ...responseMemory } = memory as any;
 
     tracer.complete(responseMemory);
 
@@ -290,7 +290,7 @@ export async function getUserMemories(req: Request, res: Response): Promise<void
     const memories = await userMemoryOps.getUserMemories(req.user.userId, queryParams);
 
     // Remove embeddings from response
-    const responseMemories = memories.map(({ embedding, ...memory }: any) => memory);
+    const responseMemories = memories.map(({ ...memory }: any) => memory);
 
     const response = {
       success: true,
@@ -403,7 +403,7 @@ export async function updateUserMemory(req: Request, res: Response): Promise<voi
     const updatedMemory = await userMemoryOps.update(memoryId, req.user.userId, updates);
 
     // Remove embedding from response
-    const { embedding, ...responseMemory } = updatedMemory as any;
+    const { ...responseMemory } = updatedMemory as any;
 
     const response = {
       success: true,

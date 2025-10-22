@@ -62,11 +62,11 @@ export async function generateEmbeddings(
 
       return {
         embeddings: allEmbeddings,
-        model: env.BEDROCK_EMBEDDING_MODEL as 'amazon.titan-embed-text-v2',
+        model: env.BEDROCK_TITAN_MODEL_ID as 'amazon.titan-embed-text-v2',
       };
     },
     {
-      component: 'embeddings',
+      component: 'tool',
       operation: 'generate_embeddings',
       metadata: {
         textCount: Array.isArray(request.text) ? request.text.length : 1,
@@ -92,7 +92,7 @@ async function processBatch(
   };
 
   const command = new InvokeModelCommand({
-    modelId: env.BEDROCK_EMBEDDING_MODEL,
+    modelId: env.BEDROCK_TITAN_MODEL_ID,
     contentType: 'application/json',
     accept: 'application/json',
     body: JSON.stringify(requestPayload),
@@ -163,7 +163,7 @@ export async function generateSingleEmbedding(
       return embedding;
     },
     {
-      component: 'embeddings',
+      component: 'tool',
       operation: 'generate_single_embedding',
       metadata: {
         textLength: text.length,
@@ -277,7 +277,7 @@ export async function checkEmbeddingHealth(): Promise<{
       };
     },
     {
-      component: 'embeddings',
+      component: 'tool',
       operation: 'health_check',
     },
     'low'

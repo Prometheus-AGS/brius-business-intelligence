@@ -7,7 +7,7 @@ import { getLangFuseClient } from './langfuse-client.js';
 import { getToolCallTracer } from './tool-tracer.js';
 import { getAgentInteractionTracer } from './agent-tracer.js';
 import { getWorkflowExecutionTracer } from './workflow-tracer.js';
-import { getConnectionManager } from '../database/connection.js';
+import { getVectorStore, getConnectionPool } from '../config/consolidated-database.js';
 import { getVectorOpsService } from '../database/vector-ops.js';
 import { performSystemHealthCheck, performPgvectorHealthCheck } from '../api/health/index.js';
 import { withErrorHandling } from './error-handling.js';
@@ -153,7 +153,7 @@ export class ObservabilityDashboard {
         const healthCheck = await performSystemHealthCheck();
 
         // Get database performance
-        const connectionManager = getConnectionManager();
+        const connectionManager = getConnectionPool();
         const dbLatencyStart = Date.now();
         await connectionManager.query('SELECT 1');
         const dbLatency = Date.now() - dbLatencyStart;

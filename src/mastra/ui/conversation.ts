@@ -75,20 +75,20 @@ const CreateConversationSchema = z.object({
   initialContext: z.object({
     domain: z.string().optional(),
     role: z.string().optional(),
-    preferences: z.record(z.any()).optional(),
+    preferences: z.record(z.string(), z.unknown()).optional(),
   }).optional(),
 });
 
 const UpdateConversationSchema = z.object({
   topic: z.string().optional(),
-  context: z.record(z.any()).optional(),
-  metadata: z.record(z.any()).optional(),
+  context: z.record(z.string(), z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 const AddMessageSchema = z.object({
   role: z.enum(['user', 'assistant', 'system']),
   content: z.string().min(1),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**
@@ -301,7 +301,7 @@ export async function createConversation(req: Request, res: Response): Promise<v
     const conversation = await conversationStore.createConversation(
       req.user.userId,
       sessionId,
-      initialContext
+      initialContext as Partial<ConversationContext> | undefined
     );
 
     // Store conversation creation in user memory for context

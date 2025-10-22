@@ -73,28 +73,6 @@ const AVAILABLE_MODELS: ModelInfo[] = [
       output_tokens_per_dollar: 2000,
     },
   },
-  {
-    id: 'orchestrator',
-    object: 'model',
-    created: 1704067200,
-    owned_by: 'brius-bi',
-    permission: [],
-    root: 'orchestrator',
-    parent: null,
-    max_tokens: 4096,
-    capabilities: [
-      'intelligent-routing',
-      'intent-classification',
-      'agent-orchestration',
-      'fallback-handling',
-      'performance-optimization',
-    ],
-    description: 'Intelligent orchestrator that routes queries to the most appropriate specialized agent',
-    pricing: {
-      input_tokens_per_dollar: 3000,
-      output_tokens_per_dollar: 1500,
-    },
-  },
 ];
 
 /**
@@ -248,14 +226,6 @@ function getPerformanceCharacteristics(modelId: string) {
       knowledge_integration: 'none',
       reasoning_depth: 'shallow',
     },
-    'orchestrator': {
-      latency: 'low', // <500ms
-      accuracy: 'excellent',
-      complexity_handling: 'routing-only',
-      context_retention: 'minimal',
-      knowledge_integration: 'classification',
-      reasoning_depth: 'routing-logic',
-    },
   };
 
   return characteristics[modelId] || {};
@@ -283,13 +253,6 @@ function getUseCases(modelId: string): string[] {
       'Quick fact-finding',
       'Simple data interpretation',
       'General guidance and recommendations',
-    ],
-    'orchestrator': [
-      'Query routing and classification',
-      'Intent analysis',
-      'Multi-agent coordination',
-      'Fallback and error handling',
-      'Performance optimization',
     ],
   };
 

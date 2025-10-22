@@ -220,7 +220,7 @@ export async function streamBusinessAnalysis(
     sections.push({
       title: 'Methodology',
       content: analysis.methodology,
-      priority: 'low' as const,
+      priority: 'medium' as const,
     });
   }
 
@@ -228,7 +228,7 @@ export async function streamBusinessAnalysis(
   sections.push({
     title: 'Analysis Confidence',
     content: `This analysis has a confidence score of ${(analysis.confidence * 100).toFixed(1)}% based on data quality, methodology robustness, and contextual factors.`,
-    priority: 'low' as const,
+    priority: 'medium' as const,
   });
 
   await streamStructuredContent(stream, sections, {
@@ -324,7 +324,7 @@ export function createStreamHeartbeat(
         (stream as any).res?.write?.(heartbeat);
       }
     } catch (error) {
-      mcpLogger.debug('Heartbeat failed, stopping interval', error);
+      mcpLogger.debug('Heartbeat failed, stopping interval', error instanceof Error ? { error: error.message } : { error: String(error) });
       clearInterval(interval);
     }
   }, intervalMs);

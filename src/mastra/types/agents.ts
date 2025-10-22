@@ -36,7 +36,7 @@ export const ChatCompletionRequestSchema = z.object({
   stop: z.union([z.string(), z.array(z.string())]).optional(),
   presence_penalty: z.number().min(-2).max(2).optional(),
   frequency_penalty: z.number().min(-2).max(2).optional(),
-  logit_bias: z.record(z.number()).optional(),
+  logit_bias: z.record(z.string(), z.number()).optional(),
   user: z.string().optional(),
   tools: z.array(z.any()).optional(),
   tool_choice: z.union([z.literal('none'), z.literal('auto'), z.object({})]).optional(),
@@ -122,7 +122,7 @@ export const AgentContextSchema = z.object({
   user_memories: z.array(z.any()).optional(),
   global_memories: z.array(z.any()).optional(),
   knowledge_context: z.array(z.any()).optional(),
-  preferences: z.record(z.any()).optional(),
+  preferences: z.record(z.string(), z.unknown()).optional(),
 });
 
 // TypeScript types inferred from schemas

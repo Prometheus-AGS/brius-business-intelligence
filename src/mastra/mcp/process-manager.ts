@@ -343,8 +343,12 @@ export class MCPProcessManager extends EventEmitter {
     mcpLogger.info('Shutting down MCP Process Manager');
 
     // Clear all timers
-    this.healthCheckTimers.forEach(timer => clearInterval(timer));
-    this.restartTimers.forEach(timer => clearTimeout(timer));
+    this.healthCheckTimers.forEach(timer => {
+      clearInterval(timer);
+    });
+    this.restartTimers.forEach(timer => {
+      clearTimeout(timer);
+    });
     this.healthCheckTimers.clear();
     this.restartTimers.clear();
 

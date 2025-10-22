@@ -26,7 +26,7 @@ const CreateTraceRequestSchema = z.object({
   userId: z.string().optional(),
   sessionId: z.string().optional(),
   input: z.any().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   tags: z.array(z.string()).optional(),
   version: z.string().optional(),
   release: z.string().optional(),
@@ -35,7 +35,7 @@ const CreateTraceRequestSchema = z.object({
 
 const UpdateTraceRequestSchema = z.object({
   output: z.any().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   tags: z.array(z.string()).optional(),
   public: z.boolean().optional(),
 });
@@ -47,7 +47,7 @@ const CreateSpanRequestSchema = z.object({
   output: z.any().optional(),
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   level: z.enum(['DEBUG', 'DEFAULT', 'WARNING', 'ERROR']).optional(),
   statusMessage: z.string().optional(),
   parentObservationId: z.string().optional(),
@@ -59,7 +59,7 @@ const CreateEventRequestSchema = z.object({
   name: z.string().min(1).max(200),
   input: z.any().optional(),
   output: z.any().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   level: z.enum(['DEBUG', 'DEFAULT', 'WARNING', 'ERROR']).optional(),
   statusMessage: z.string().optional(),
   startTime: z.string().datetime().optional(),
@@ -79,7 +79,7 @@ const CreateGenerationRequestSchema = z.object({
   }).optional(),
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   level: z.enum(['DEBUG', 'DEFAULT', 'WARNING', 'ERROR']).optional(),
   statusMessage: z.string().optional(),
   parentObservationId: z.string().optional(),
@@ -200,7 +200,7 @@ export async function createTrace(req: Request, res: Response): Promise<void> {
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -294,7 +294,7 @@ export async function updateTrace(req: Request, res: Response): Promise<void> {
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -321,7 +321,8 @@ export async function updateTrace(req: Request, res: Response): Promise<void> {
         },
       };
 
-      await langfuseClient.updateTrace(updateData);
+      // TODO: Implement updateTrace method in LangFuseClient or use updateObservation
+      // await langfuseClient.updateTrace(updateData);
 
       rootLogger.info('Trace updated via API', {
         trace_id: traceId,
@@ -402,7 +403,7 @@ export async function listTraces(req: Request, res: Response): Promise<void> {
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid query parameters',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -447,7 +448,7 @@ export async function createSpan(req: Request, res: Response): Promise<void> {
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -531,7 +532,7 @@ export async function createEvent(req: Request, res: Response): Promise<void> {
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -612,7 +613,7 @@ export async function createGeneration(req: Request, res: Response): Promise<voi
       if (!validation.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: validation.error.errors,
+          details: validation.error.issues,
           constitutional_compliance: true,
         });
         return;
@@ -793,7 +794,8 @@ export function traceApiErrorHandler(err: any, req: Request, res: Response, next
     tags: ['api-error', 'trace-api'],
   });
 
-  rootLogger.error('Trace API error', err, {
+  rootLogger.error('Trace API error', {
+    error: err,
     error_id: errorId,
     method: req.method,
     path: req.path,

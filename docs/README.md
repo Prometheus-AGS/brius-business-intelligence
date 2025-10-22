@@ -9,8 +9,11 @@
 
 ## 1. Executive Summary
 
-This document specifies a production-grade Mastra-based Business Intelligence agent system that:
-- Acts as both an MCP client (consuming Supabase MCP) and MCP server (exposing agents/workflows)
+This document specifies a production-grade Mastra-based Business Intelligence agent system.  
+> **Architecture Update (2025-10-19):** The implementation now uses AWS Bedrock (Claude Sonnet + Titan embeddings), Mastra’s built-in memory, direct pgvector access, and MCP-derived tooling. Supabase-specific components referenced below are deprecated and will be replaced with the new Bedrock/pgvector modules during the refactor.
+
+Key capabilities:
+- Acts as both an MCP client (consuming configured MCP servers) and MCP server (exposing agents/workflows)
 - Provides OpenAI-compatible REST APIs for chat completions, models, and embeddings
 - Implements intelligent orchestration with intent-based routing
 - Integrates comprehensive observability via LangFuse with per-user tracking
@@ -109,14 +112,6 @@ The server supports loading additional MCP servers from a standard `mcp.json` fi
 ```json
 {
   "mcpServers": {
-    "supabase": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-supabase"],
-      "env": {
-        "SUPABASE_URL": "https://gyyottknjakkagswebwh.supabase.co",
-        "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-      }
-    },
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
@@ -1563,7 +1558,7 @@ OPENAI_API_KEY=<api-key>
 AWS_ACCESS_KEY_ID=<access-key>
 AWS_SECRET_ACCESS_KEY=<secret-key>
 AWS_REGION=us-east-1
-BEDROCK_EMBEDDING_MODEL=amazon.titan-embed-text-v2
+BEDROCK_TITAN_MODEL_ID=amazon.titan-embed-text-v2
 
 # MCP Server
 MCP_SERVER_PORT=3001

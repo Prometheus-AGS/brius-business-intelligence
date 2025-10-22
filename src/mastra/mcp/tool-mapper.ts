@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { mcpClient, MCPTool, MCPResource } from './client.js';
+import { mcpClient, MCPTool } from './client.js';
+import { mastraMCPClientManager } from './mastra-client.js';
 import { mcpLogger } from '../observability/logger.js';
 
 /**
@@ -46,7 +47,7 @@ export interface ToolMapping {
   mappedName: string;
   namespace: string;
   serverId: string;
-  conflictResolution?: 'namespace' | 'priority' | 'suffix';
+  conflictResolution?: 'namespace' | 'priority' | 'suffix' | 'error';
 }
 
 export interface ToolDiscoveryOptions {
@@ -95,7 +96,7 @@ export class MCPToolMapper {
   async discoverAllTools(): Promise<MappedTool[]> {
     mcpLogger.info('Starting tool discovery across all connected servers');
 
-    const connections = mcpClient.getConnectedServers();
+    const connections = mastraMCPClientManager.getConnectedServers();
     const discoveryPromises = connections.map(connection =>
       this.discoverToolsFromServer(connection.serverId)
     );
@@ -118,7 +119,19 @@ export class MCPToolMapper {
   async discoverToolsFromServer(serverId: string): Promise<MappedTool[]> {
     mcpLogger.info('Discovering tools from MCP server', { server_id: serverId });
 
-    const connection = mcpClient.getConnection(serverId);
+    const connection = mastraMCPClientManager.getConnection(serverId);
+    mcpLogger.info('🔥 TOOL MAPPER CONNECTION CHECK', {
+      server_id: serverId,
+      connection_exists: !!connection,
+      connection_status: connection?.status,
+      connection_tools_count: connection?.tools?.length || 0,
+      all_connections: mastraMCPClientManager.getConnectedServers().map(c => ({
+        serverId: c.serverId,
+        status: c.status,
+        toolsCount: c.tools.length
+      }))
+    });
+
     if (!connection || connection.status !== 'connected') {
       throw new Error(`MCP server not connected: ${serverId}`);
     }
@@ -132,6 +145,11 @@ export class MCPToolMapper {
           const mappedTool = await this.mapTool(tool, serverId);
           mappedTools.push(mappedTool);
           this.mappedTools.set(mappedTool.id, mappedTool);
+          mcpLogger.info('🔥 TOOL STORED IN MAPPER', {
+            tool_id: mappedTool.id,
+            server_id: serverId,
+            total_stored_tools: this.mappedTools.size
+          });
         } catch (error) {
           mcpLogger.warn('Failed to map tool', {
             server_id: serverId,
@@ -172,7 +190,7 @@ export class MCPToolMapper {
     const finalToolId = await this.resolveNamingConflict(toolId, mcpTool.name, serverId);
 
     // Convert input schema to Zod schema
-    const inputSchema = this.convertToZodSchema(mcpTool.inputSchema);
+    const inputSchema = this.convertToZodSchema(mcpTool.inputSchema, mcpTool.name, serverId);
 
     // Enhance description if enabled
     const description = this.options.descriptionEnhancement
@@ -240,7 +258,17 @@ export class MCPToolMapper {
    * Get all mapped tools
    */
   getAllMappedTools(): MappedTool[] {
-    return Array.from(this.mappedTools.values());
+    const tools = Array.from(this.mappedTools.values());
+    mcpLogger.info('🔥 TOOL MAPPER getAllMappedTools() called', {
+      mapped_tools_count: tools.length,
+      mapped_tool_ids: tools.map(t => t.id),
+      mapped_tools_sample: tools.slice(0, 3).map(t => ({
+        id: t.id,
+        serverId: t.serverId,
+        namespace: t.namespace
+      }))
+    });
+    return tools;
   }
 
   /**
@@ -457,9 +485,23 @@ export class MCPToolMapper {
   /**
    * Convert MCP input schema to Zod schema
    */
-  private convertToZodSchema(inputSchema: any): z.ZodSchema {
+  private convertToZodSchema(inputSchema: any, toolName?: string, serverId?: string): z.ZodSchema {
+    // First, try to get a hardcoded schema for known tools
+    const hardcodedSchema = this.getHardcodedSchema(toolName, serverId);
+    if (hardcodedSchema) {
+      mcpLogger.info('Using hardcoded schema for tool', {
+        tool_name: toolName,
+        server_id: serverId,
+      });
+      return hardcodedSchema;
+    }
+
     if (!inputSchema) {
-      return z.record(z.any()); // Accept any object if no schema provided
+      mcpLogger.warn('No input schema provided for tool, using fallback schema', {
+        tool_name: toolName,
+        server_id: serverId,
+      });
+      return z.record(z.string(), z.unknown()); // Accept any object if no schema provided
     }
 
     try {
@@ -468,28 +510,16 @@ export class MCPToolMapper {
         const shape: Record<string, z.ZodSchema> = {};
 
         if (inputSchema.properties) {
+          const requiredFields = new Set(inputSchema.required || []);
+
           for (const [key, prop] of Object.entries(inputSchema.properties as Record<string, any>)) {
-            shape[key] = this.convertPropertyToZod(prop);
+            const baseSchema = this.convertPropertyToZod(prop);
+            // Make field optional if it's not in the required list
+            shape[key] = requiredFields.has(key) ? baseSchema : baseSchema.optional();
           }
         }
 
-        let objectSchema = z.object(shape);
-
-        // Handle required fields
-        if (inputSchema.required && Array.isArray(inputSchema.required)) {
-          // Zod object schema already handles required by default
-          // Optional fields need to be explicitly marked
-          const requiredFields = new Set(inputSchema.required);
-          const newShape: Record<string, z.ZodSchema> = {};
-
-          for (const [key, schema] of Object.entries(shape)) {
-            newShape[key] = requiredFields.has(key) ? schema : schema.optional();
-          }
-
-          objectSchema = z.object(newShape);
-        }
-
-        return objectSchema;
+        return z.object(shape);
       }
 
       // Fallback for other types
@@ -497,13 +527,87 @@ export class MCPToolMapper {
 
     } catch (error) {
       mcpLogger.warn('Failed to convert input schema to Zod', {
+        tool_name: toolName,
+        server_id: serverId,
         schema: inputSchema,
         error: error instanceof Error ? error.message : String(error),
       });
 
       // Fallback to accepting any object
-      return z.record(z.any());
+      return z.record(z.string(), z.unknown());
     }
+  }
+
+  /**
+   * Get hardcoded schema for known tools
+   */
+  private getHardcodedSchema(toolName?: string, serverId?: string): z.ZodSchema | null {
+    if (!toolName || !serverId) {
+      return null;
+    }
+
+    // Supabase MCP tool schemas
+    if (serverId === 'supabase-mcp') {
+      switch (toolName) {
+        case 'list_tables':
+          return z.object({
+            project_id: z.string(),
+            schemas: z.array(z.string()).optional().default(['public']),
+          });
+
+        case 'list_extensions':
+          return z.object({
+            project_id: z.string(),
+          });
+
+        case 'list_migrations':
+          return z.object({
+            project_id: z.string(),
+          });
+
+        case 'apply_migration':
+          return z.object({
+            project_id: z.string(),
+            name: z.string(),
+            query: z.string(),
+          });
+
+        case 'execute_sql':
+          return z.object({
+            project_id: z.string(),
+            query: z.string(),
+          });
+
+        case 'list_edge_functions':
+          return z.object({
+            project_id: z.string(),
+          });
+
+        case 'get_edge_function':
+          return z.object({
+            project_id: z.string(),
+            function_slug: z.string(),
+          });
+
+        case 'deploy_edge_function':
+          return z.object({
+            project_id: z.string(),
+            name: z.string(),
+            files: z.array(z.object({
+              name: z.string(),
+              content: z.string(),
+            })),
+            entrypoint_path: z.string().optional().default('index.ts'),
+            import_map_path: z.string().optional(),
+          });
+
+        default:
+          return null;
+      }
+    }
+
+    // Could add schemas for other MCP servers here in the future
+    return null;
   }
 
   /**
@@ -527,7 +631,7 @@ export class MCPToolMapper {
         const itemSchema = prop.items ? this.convertPropertyToZod(prop.items) : z.any();
         return z.array(itemSchema);
       case 'object':
-        return z.record(z.any()); // Simplified object handling
+        return z.record(z.string(), z.unknown()); // Simplified object handling
       default:
         return z.any();
     }
@@ -545,10 +649,13 @@ export class MCPToolMapper {
     }
 
     // Add schema information
-    if (tool.inputSchema && tool.inputSchema.properties) {
-      const paramCount = Object.keys(tool.inputSchema.properties).length;
-      if (paramCount > 0) {
-        enhanced += ` (${paramCount} parameter${paramCount === 1 ? '' : 's'})`;
+    if (tool.inputSchema && typeof tool.inputSchema === 'object' && tool.inputSchema !== null) {
+      const schema = tool.inputSchema as any;
+      if (schema.properties && typeof schema.properties === 'object') {
+        const paramCount = Object.keys(schema.properties).length;
+        if (paramCount > 0) {
+          enhanced += ` (${paramCount} parameter${paramCount === 1 ? '' : 's'})`;
+        }
       }
     }
 
@@ -609,7 +716,7 @@ export class MCPToolMapper {
 
     // Extract from metadata
     if (tool.metadata) {
-      for (const [key, value] of Object.entries(tool.metadata)) {
+      for (const [_, value] of Object.entries(tool.metadata)) {
         if (typeof value === 'string' && value.length < 20) {
           tags.add(value.toLowerCase());
         }

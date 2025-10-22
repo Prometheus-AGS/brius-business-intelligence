@@ -5,14 +5,14 @@ export const ErrorResponseSchema = z.object({
   error: z.object({
     message: z.string(),
     code: z.string().optional(),
-    details: z.record(z.any()).optional(),
+    details: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 
 export const SuccessResponseSchema = z.object({
   success: z.boolean(),
   message: z.string().optional(),
-  data: z.record(z.any()).optional(),
+  data: z.record(z.string(), z.unknown()).optional(),
 });
 
 // Health Check Types
@@ -107,8 +107,8 @@ export const JWTPayloadSchema = z.object({
   iat: z.number().int().positive(), // issued at timestamp
   email: z.string().email().optional(),
   role: z.string().optional(),
-  app_metadata: z.record(z.any()).optional(),
-  user_metadata: z.record(z.any()).optional(),
+  app_metadata: z.record(z.string(), z.unknown()).optional(),
+  user_metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const AuthContextSchema = z.object({
@@ -150,7 +150,7 @@ export const StreamingEventSchema = z.object({
 export const WebhookEventSchema = z.object({
   id: z.string().uuid(),
   type: z.string(),
-  data: z.record(z.any()),
+  data: z.record(z.string(), z.unknown()),
   timestamp: z.string().datetime(),
   source: z.string(),
 });

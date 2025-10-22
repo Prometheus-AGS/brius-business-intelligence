@@ -126,6 +126,7 @@ export type WorkflowStepType =
   | 'sequential'
   | 'loop'
   | 'human_input'
+  | 'human_approval'
   | 'data_transformation'
   | 'external_api'
   | 'decision_point';
@@ -441,7 +442,7 @@ export const TraceContextSchema = z.object({
   workflowId: z.string().optional(),
   agentId: z.string().optional(),
   requestId: z.string().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const PerformanceMetricsSchema = z.object({
@@ -469,7 +470,7 @@ export const TraceErrorSchema = z.object({
   context: TraceContextSchema,
   recoverable: z.boolean(),
   resolution: z.string().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const ToolCallMetadataSchema = z.object({

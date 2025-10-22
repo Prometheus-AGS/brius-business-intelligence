@@ -70,7 +70,7 @@ OPENAI_API_KEY=your-openai-api-key
 AWS_ACCESS_KEY_ID=your-aws-access-key
 AWS_SECRET_ACCESS_KEY=your-aws-secret-key
 AWS_REGION=us-east-1
-BEDROCK_EMBEDDING_MODEL=amazon.titan-embed-text-v2
+BEDROCK_TITAN_MODEL_ID=amazon.titan-embed-text-v2
 
 # MCP Server Configuration
 MCP_SERVER_PORT=3001

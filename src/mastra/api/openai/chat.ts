@@ -1,14 +1,15 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { executeOrchestrator } from '../../workflows/orchestrator.js';
-import { OrchestratorInput } from '../../types/index.js';
+import { executeDefaultOrchestration } from '../../workflows/default-orchestration.js';
+import { executeBusinessIntelligenceOrchestration } from '../../workflows/business-intelligence-orchestration.js';
+import { PromptOrchestrationInput } from '../../types/workflows.js';
 import { mcpLogger } from '../../observability/logger.js';
 import { createSSEStream } from './streaming.js';
 
 /**
  * OpenAI-Compatible Chat Completions API
  * Provides OpenAI-compatible endpoint for business intelligence queries
- * Routes through orchestrator for intelligent agent selection
+ * Routes through orchestration workflows for intelligent agent selection
  */
 
 // OpenAI API Schema Definitions
@@ -28,7 +29,7 @@ const ChatCompletionRequestSchema = z.object({
   stop: z.union([z.string(), z.array(z.string())]).optional(),
   presence_penalty: z.number().min(-2).max(2).optional(),
   frequency_penalty: z.number().min(-2).max(2).optional(),
-  logit_bias: z.record(z.number()).optional(),
+  logit_bias: z.record(z.string(), z.number()).optional(),
   top_p: z.number().min(0).max(1).optional(),
   n: z.number().int().positive().default(1),
 });
@@ -121,8 +122,8 @@ export async function handleChatCompletions(req: Request, res: Response): Promis
       return;
     }
 
-    // Prepare orchestrator input
-    const orchestratorInput: OrchestratorInput = {
+    // Prepare orchestration input
+    const orchestrationInput: PromptOrchestrationInput = {
       prompt: userMessage.content,
       user_id: requestData.user || 'anonymous',
       conversation_id: requestId,
@@ -137,10 +138,10 @@ export async function handleChatCompletions(req: Request, res: Response): Promis
 
     if (requestData.stream) {
       // Handle streaming response
-      await handleStreamingResponse(res, orchestratorInput, requestData, requestId);
+      await handleStreamingResponse(res, orchestrationInput, requestData, requestId);
     } else {
       // Handle non-streaming response
-      await handleNonStreamingResponse(res, orchestratorInput, requestData, requestId);
+      await handleNonStreamingResponse(res, orchestrationInput, requestData, requestId);
     }
 
   } catch (error) {
@@ -163,19 +164,15 @@ export async function handleChatCompletions(req: Request, res: Response): Promis
  */
 async function handleNonStreamingResponse(
   res: Response,
-  orchestratorInput: OrchestratorInput,
+  orchestrationInput: PromptOrchestrationInput,
   requestData: ChatCompletionRequest,
   requestId: string
 ): Promise<void> {
   try {
-    // Execute orchestrator
-    const orchestratorResult = await executeOrchestrator(orchestratorInput, {
-      traceId: requestId,
-      userId: requestData.user,
-    });
+    const orchestrationResult = await executeWorkflowForModel(requestData.model, orchestrationInput);
 
     // Extract response content from agent response
-    const responseContent = extractResponseContent(orchestratorResult.agent_response);
+    const responseContent = extractResponseContent(orchestrationResult.agent_response);
 
     // Build OpenAI-compatible response
     const response: ChatCompletionResponse = {
@@ -194,17 +191,17 @@ async function handleNonStreamingResponse(
         },
       ],
       usage: {
-        prompt_tokens: estimateTokens(orchestratorInput.prompt),
+        prompt_tokens: estimateTokens(orchestrationInput.prompt),
         completion_tokens: estimateTokens(responseContent),
-        total_tokens: estimateTokens(orchestratorInput.prompt) + estimateTokens(responseContent),
+        total_tokens: estimateTokens(orchestrationInput.prompt) + estimateTokens(responseContent),
       },
     };
 
     mcpLogger.info('Chat completion response generated', {
       request_id: requestId,
-      selected_agent: orchestratorResult.selected_agent,
+      selected_agent: orchestrationResult.selected_agent,
       response_length: responseContent.length,
-      execution_path: orchestratorResult.execution_path,
+      execution_path: orchestrationResult.execution_path,
     });
 
     res.json(response);
@@ -220,7 +217,7 @@ async function handleNonStreamingResponse(
  */
 async function handleStreamingResponse(
   res: Response,
-  orchestratorInput: OrchestratorInput,
+  orchestrationInput: PromptOrchestrationInput,
   requestData: ChatCompletionRequest,
   requestId: string
 ): Promise<void> {
@@ -254,13 +251,10 @@ async function handleStreamingResponse(
 
     sseStream.write(initialChunk);
 
-    // Execute orchestrator (for now, we'll simulate streaming)
-    const orchestratorResult = await executeOrchestrator(orchestratorInput, {
-      traceId: requestId,
-      userId: requestData.user,
-    });
+    // Execute orchestration workflow (simulate streaming by chunking response)
+    const orchestrationResult = await executeWorkflowForModel(requestData.model, orchestrationInput);
 
-    const responseContent = extractResponseContent(orchestratorResult.agent_response);
+    const responseContent = extractResponseContent(orchestrationResult.agent_response);
 
     // Stream response in chunks
     await streamResponseContent(sseStream, responseContent, requestId, requestData.model);
@@ -285,7 +279,7 @@ async function handleStreamingResponse(
 
     mcpLogger.info('Streaming chat completion completed', {
       request_id: requestId,
-      selected_agent: orchestratorResult.selected_agent,
+      selected_agent: orchestrationResult.selected_agent,
       response_length: responseContent.length,
     });
 
@@ -356,7 +350,7 @@ async function streamResponseContent(
 }
 
 /**
- * Extract response content from orchestrator result
+ * Extract response content from orchestration result
  */
 function extractResponseContent(agentResponse: any): string {
   // Handle different response formats from agents
@@ -406,22 +400,13 @@ export async function healthCheck(): Promise<{ healthy: boolean; latency?: numbe
   try {
     const startTime = Date.now();
 
-    const testRequest: ChatCompletionRequest = {
-      model: 'business-intelligence',
-      messages: [
-        { role: 'user', content: 'Health check test query' }
-      ],
-      stream: false,
-      max_tokens: 50,
-    };
-
-    const orchestratorInput: OrchestratorInput = {
+    const orchestrationInput: PromptOrchestrationInput = {
       prompt: 'Health check test query',
       user_id: 'health-check',
       conversation_id: 'health-check',
     };
 
-    await executeOrchestrator(orchestratorInput);
+    await executeDefaultOrchestration(orchestrationInput);
 
     const latency = Date.now() - startTime;
 
@@ -462,4 +447,14 @@ export function getAvailableModels() {
       parent: null,
     },
   ];
+}
+
+async function executeWorkflowForModel(
+  model: string,
+  input: PromptOrchestrationInput,
+) {
+  if (model === 'business-intelligence') {
+    return executeBusinessIntelligenceOrchestration(input);
+  }
+  return executeDefaultOrchestration(input);
 }

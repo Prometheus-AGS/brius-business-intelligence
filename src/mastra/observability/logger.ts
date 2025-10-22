@@ -155,7 +155,7 @@ class Logger {
     // Remove undefined fields for cleaner output
     const cleanEntry = Object.fromEntries(
       Object.entries(entry).filter(([_, value]) => value !== undefined)
-    );
+    ) as LogEntry;
 
     // Output based on environment
     if (isDevelopment()) {

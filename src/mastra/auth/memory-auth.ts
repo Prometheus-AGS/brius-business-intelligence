@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { userMemoryOps } from '../memory/operations.js';
 import { createMemoryMiddleware, extractMemoryContext } from '../memory/middleware.js';
-import { authLogger } from '../observability/logger.js';
+import { apiLogger } from '../observability/logger.js';
 import { AuthContext } from '../types/index.js';
 
 /**
@@ -61,7 +61,7 @@ export function createMemoryAuthMiddleware(
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      authLogger.info('Memory auth middleware starting', {
+      apiLogger.info('Memory auth middleware starting', {
         path: req.path,
         method: req.method,
         require_auth: config.requireAuth,
@@ -71,7 +71,7 @@ export function createMemoryAuthMiddleware(
 
       // Step 1: Basic authentication check
       if (config.requireAuth && !req.user?.userId) {
-        authLogger.warn('Authentication required but not provided', {
+        apiLogger.warn('Authentication required but not provided', {
           path: req.path,
           method: req.method,
         });
@@ -89,7 +89,7 @@ export function createMemoryAuthMiddleware(
       // Step 2: Role-based authorization
       if (config.allowedRoles.length > 0 && req.user?.role) {
         if (!config.allowedRoles.includes(req.user.role)) {
-          authLogger.warn('User role not authorized', {
+          apiLogger.warn('User role not authorized', {
             user_id: req.user.userId,
             user_role: req.user.role,
             allowed_roles: config.allowedRoles,
@@ -115,7 +115,7 @@ export function createMemoryAuthMiddleware(
         );
 
         if (!hasRequiredPermissions) {
-          authLogger.warn('User lacks required permissions', {
+          apiLogger.warn('User lacks required permissions', {
             user_id: req.user?.userId,
             user_permissions: userPermissions,
             required_permissions: config.requiredPermissions,
@@ -142,11 +142,11 @@ export function createMemoryAuthMiddleware(
         try {
           // Test memory access by attempting to get user memory stats
           await userMemoryOps.getMemoryStats(req.user.userId);
-          authLogger.debug('Memory access validated', {
+          apiLogger.debug('Memory access validated', {
             user_id: req.user.userId,
           });
         } catch (memoryError) {
-          authLogger.error('Memory access validation failed', {
+          apiLogger.error('Memory access validation failed', {
             user_id: req.user.userId,
             error: memoryError instanceof Error ? memoryError.message : String(memoryError),
           });
@@ -166,6 +166,8 @@ export function createMemoryAuthMiddleware(
       if (req.user) {
         const enhancedAuthContext: EnhancedAuthContext = {
           ...req.user,
+          user_id: (req.user as any).userId || (req.user as any).user_id || '',
+          is_authenticated: true,
           memoryEnabled: config.enableContextInjection,
           memoryCategories: config.memoryCategories,
           contextInjected: false,
@@ -177,7 +179,7 @@ export function createMemoryAuthMiddleware(
 
       // Step 6: Apply memory context injection if enabled
       if (config.enableContextInjection && req.user?.userId) {
-        authLogger.debug('Applying memory context injection', {
+        apiLogger.debug('Applying memory context injection', {
           user_id: req.user.userId,
           path: req.path,
         });
@@ -198,7 +200,7 @@ export function createMemoryAuthMiddleware(
           (req.user as EnhancedAuthContext).contextInjected = true;
         }
 
-        authLogger.info('Memory context injection completed', {
+        apiLogger.info('Memory context injection completed', {
           user_id: req.user.userId,
           has_memory_context: Boolean(extractMemoryContext(req)),
           path: req.path,
@@ -206,7 +208,7 @@ export function createMemoryAuthMiddleware(
       }
 
       // Step 7: Log successful authentication and authorization
-      authLogger.info('Memory auth middleware completed successfully', {
+      apiLogger.info('Memory auth middleware completed successfully', {
         user_id: req.user?.userId,
         user_role: req.user?.role,
         memory_enabled: config.enableContextInjection,
@@ -218,7 +220,7 @@ export function createMemoryAuthMiddleware(
       next();
 
     } catch (error) {
-      authLogger.error('Memory auth middleware failed', {
+      apiLogger.error('Memory auth middleware failed', {
         error: error instanceof Error ? error.message : String(error),
         path: req.path,
         method: req.method,
@@ -342,7 +344,7 @@ export function getMemoryAccessLevel(req: Request): 'none' | 'read' | 'write' | 
     return 'write';
   }
 
-  if (user.userId) {
+  if (user.user_id) {
     return 'read';
   }
 
@@ -365,7 +367,7 @@ export function enhanceRequestContext(req: Request, res: Response, next: NextFun
       contextInjected: hasContext,
     };
 
-    authLogger.debug('Request context enhanced', {
+    apiLogger.debug('Request context enhanced', {
       user_id: req.user.userId,
       memory_access_level: accessLevel,
       has_memory_context: hasContext,

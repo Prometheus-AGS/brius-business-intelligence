@@ -7,7 +7,7 @@ export const KnowledgeDocumentSchema = z.object({
   content: z.string(),
   file_type: z.string(),
   file_size: z.number().int().positive(),
-  metadata: z.record(z.any()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
   uploaded_by: z.string().optional(),
   processing_status: z.enum(['pending', 'processing', 'completed', 'failed']),
   created_at: z.string().datetime(),
@@ -22,13 +22,13 @@ export const DocumentSummarySchema = z.object({
   file_size: z.number().int().positive(),
   processing_status: z.enum(['pending', 'processing', 'completed', 'failed']),
   uploaded_by: z.string().optional(),
-  metadata: z.record(z.any()),
+  metadata: z.record(z.string(), z.unknown()),
   created_at: z.string().datetime(),
 });
 
 export const DocumentUploadRequestSchema = z.object({
   file: z.any(), // File object
-  metadata: z.record(z.any()).optional().default({}),
+  metadata: z.record(z.string(), z.unknown()).optional().default({}),
 });
 
 export const DocumentUploadResponseSchema = z.object({
@@ -46,7 +46,7 @@ export const DocumentChunkSchema = z.object({
   chunk_index: z.number().int().nonnegative(),
   content: z.string().min(1),
   embedding: z.array(z.number()).length(1024).optional(),
-  metadata: z.record(z.any()).default({}),
+  metadata: z.record(z.string(), z.unknown()).default({}),
   created_at: z.string().datetime(),
 });
 
@@ -71,7 +71,7 @@ export const KnowledgeSearchResultSchema = z.object({
   document_filename: z.string().optional(),
   content: z.string(),
   similarity_score: z.number().min(0).max(1),
-  metadata: z.record(z.any()),
+  metadata: z.record(z.string(), z.unknown()),
   chunk_index: z.number().int().nonnegative().optional(),
 });
 
@@ -113,7 +113,7 @@ export const KnowledgeStatsSchema = z.object({
   total_documents: z.number().int().nonnegative(),
   total_chunks: z.number().int().nonnegative(),
   storage_size_mb: z.number().nonnegative(),
-  documents_by_type: z.record(z.number().int().nonnegative()).optional(),
+  documents_by_type: z.record(z.string(), z.number().int().nonnegative()).optional(),
   processing_status_counts: z
     .object({
       pending: z.number().int().nonnegative().optional(),

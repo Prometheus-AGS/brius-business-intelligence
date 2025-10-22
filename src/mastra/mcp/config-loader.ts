@@ -14,7 +14,7 @@ const MCPServerConfigSchema = z.object({
   name: z.string().min(1),
   command: z.string().min(1),
   args: z.array(z.string()).optional().default([]),
-  env: z.record(z.string()).optional().default({}),
+  env: z.record(z.string(), z.string()).optional().default({}),
   cwd: z.string().optional(),
   timeout: z.number().min(1000).optional().default(30000),
   restart: z.boolean().optional().default(true),
@@ -24,19 +24,25 @@ const MCPServerConfigSchema = z.object({
   categories: z.array(z.string()).optional().default([]),
   description: z.string().optional(),
   version: z.string().optional(),
-  metadata: z.record(z.any()).optional().default({}),
+  metadata: z.record(z.string(), z.unknown()).optional().default({}),
 });
 
 const MCPConfigSchema = z.object({
   version: z.string().default('1.0.0'),
-  servers: z.record(MCPServerConfigSchema),
+  servers: z.record(z.string(), MCPServerConfigSchema),
   global: z.object({
     timeout: z.number().min(1000).optional().default(30000),
     maxConcurrent: z.number().min(1).optional().default(10),
     retryAttempts: z.number().min(0).optional().default(3),
     retryDelay: z.number().min(100).optional().default(1000),
-    env: z.record(z.string()).optional().default({}),
-  }).optional().default({}),
+    env: z.record(z.string(), z.string()).optional().default({}),
+  }).optional().default({
+    timeout: 30000,
+    maxConcurrent: 10,
+    retryAttempts: 3,
+    retryDelay: 1000,
+    env: {},
+  }),
   extends: z.string().optional(),
   includes: z.array(z.string()).optional().default([]),
 });
@@ -67,6 +73,7 @@ export interface ResolvedMCPServerConfig extends MCPServerConfig {
  */
 export class MCPConfigLoader {
   private configCache = new Map<string, ResolvedMCPConfig>();
+  private hardcodedServers = new Map<string, ResolvedMCPServerConfig>();
   private readonly defaultConfigPaths = [
     './mcp.json',
     './config/mcp.json',
@@ -78,9 +85,15 @@ export class MCPConfigLoader {
    * Load MCP configuration from file or default locations
    */
   async loadConfig(configPath?: string): Promise<ResolvedMCPConfig> {
+    mcpLogger.info('🔥 MCP CONFIG LOADER - START', {
+      requested_path: configPath,
+      cwd: process.cwd(),
+      default_paths: this.defaultConfigPaths
+    });
+
     const resolvedPath = await this.findConfigFile(configPath);
 
-    mcpLogger.info('Loading MCP configuration', {
+    mcpLogger.info('🔥 MCP CONFIG FILE FOUND', {
       config_path: resolvedPath,
       explicit_path: Boolean(configPath),
     });
@@ -168,8 +181,16 @@ export class MCPConfigLoader {
       const parentPath = this.resolveConfigPath(rawConfig.extends, configPath);
       const parentConfig = await this.loadAndProcessConfig(parentPath, newLoadedConfigs);
 
+      // Convert resolved config back to raw format for merging
+      const parentRawConfig: MCPConfig = {
+        version: parentConfig.version,
+        servers: parentConfig.servers,
+        global: parentConfig.global,
+        includes: [],
+      };
+
       // Merge parent configuration
-      processedConfig = this.mergeConfigs(parentConfig, processedConfig);
+      processedConfig = this.mergeConfigs(parentRawConfig, processedConfig);
     }
 
     // Process includes
@@ -177,8 +198,16 @@ export class MCPConfigLoader {
       const resolvedIncludePath = this.resolveConfigPath(includePath, configPath);
       const includeConfig = await this.loadAndProcessConfig(resolvedIncludePath, newLoadedConfigs);
 
+      // Convert resolved config back to raw format for merging
+      const includeRawConfig: MCPConfig = {
+        version: includeConfig.version,
+        servers: includeConfig.servers,
+        global: includeConfig.global,
+        includes: [],
+      };
+
       // Merge included configuration
-      processedConfig = this.mergeConfigs(processedConfig, includeConfig);
+      processedConfig = this.mergeConfigs(processedConfig, includeRawConfig);
     }
 
     // Resolve and validate final configuration
@@ -262,7 +291,13 @@ export class MCPConfigLoader {
     return {
       version: config.version,
       servers: resolvedServers,
-      global: config.global || {},
+      global: config.global || {
+        timeout: 30000,
+        maxConcurrent: 10,
+        retryAttempts: 3,
+        retryDelay: 1000,
+        env: {},
+      },
       metadata: {
         configPath,
         loadedAt: new Date().toISOString(),
@@ -279,7 +314,13 @@ export class MCPConfigLoader {
   private resolveServerConfig(
     serverId: string,
     serverConfig: MCPServerConfig,
-    globalConfig: MCPConfig['global'] = {}
+    globalConfig: MCPConfig['global'] = {
+      timeout: 30000,
+      maxConcurrent: 10,
+      retryAttempts: 3,
+      retryDelay: 1000,
+      env: {},
+    }
   ): ResolvedMCPServerConfig {
     // Resolve environment variables
     const resolvedEnv = this.resolveEnvironmentVariables({
@@ -364,6 +405,13 @@ export class MCPConfigLoader {
    * Get server configuration by ID
    */
   async getServerConfig(serverId: string, configPath?: string): Promise<ResolvedMCPServerConfig | null> {
+    // First check for hardcoded servers
+    const hardcodedServer = this.hardcodedServers.get(serverId);
+    if (hardcodedServer) {
+      return hardcodedServer;
+    }
+
+    // Then check configuration files
     const config = await this.loadConfig(configPath);
     return config.servers[serverId] || null;
   }
@@ -397,6 +445,43 @@ export class MCPConfigLoader {
       errors.push(error instanceof Error ? error.message : String(error));
       return { valid: false, errors, warnings };
     }
+  }
+
+  /**
+   * Register a hardcoded server configuration
+   * Used for servers that are configured programmatically rather than via config files
+   */
+  async registerHardcodedServer(serverId: string, serverConfig: ResolvedMCPServerConfig): Promise<void> {
+    mcpLogger.info('Registering hardcoded MCP server', {
+      server_id: serverId,
+      server_type: serverConfig.metadata?.serverType || 'unknown',
+      url: serverConfig.metadata?.url,
+    });
+
+    // Store the hardcoded server configuration
+    this.hardcodedServers.set(serverId, serverConfig);
+
+    // Clear any cached configurations to force reload
+    this.clearCache();
+
+    mcpLogger.debug('Hardcoded MCP server registered successfully', {
+      server_id: serverId,
+      total_hardcoded_servers: this.hardcodedServers.size,
+    });
+  }
+
+  /**
+   * Get hardcoded server configuration by ID
+   */
+  getHardcodedServer(serverId: string): ResolvedMCPServerConfig | null {
+    return this.hardcodedServers.get(serverId) || null;
+  }
+
+  /**
+   * List all hardcoded servers
+   */
+  listHardcodedServers(): ResolvedMCPServerConfig[] {
+    return Array.from(this.hardcodedServers.values());
   }
 }
 

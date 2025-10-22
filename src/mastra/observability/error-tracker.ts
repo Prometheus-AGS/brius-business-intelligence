@@ -344,7 +344,7 @@ export class ErrorTracker {
         return context.errorId;
       },
       {
-        component: 'error_tracker',
+        component: 'system',
         operation: 'track_error',
         metadata: {
           error_id: context.errorId,
@@ -395,7 +395,7 @@ export class ErrorTracker {
       error_type: error.constructor.name,
       error_name: error.name,
       stack_available: Boolean(error.stack),
-      cause_available: Boolean(error.cause),
+      cause_available: Boolean((error as any).cause),
     };
 
     // Sanitize sensitive data
@@ -501,7 +501,7 @@ export class ErrorTracker {
       {
         errorId: context.errorId,
         stack: error.stack,
-        cause: error.cause as string,
+        cause: (error as any).cause as string,
         recoverable: this.isRecoverableError(error, context),
         resolution: this.suggestResolution(error, context),
         metadata: {
@@ -675,7 +675,7 @@ export class ErrorTracker {
         };
       },
       {
-        component: 'error_tracker',
+        component: 'system',
         operation: 'analyze_error',
         metadata: { error_id: context.errorId },
       },
@@ -777,7 +777,7 @@ export class ErrorTracker {
       context
     );
 
-    for (const [signature, occurrence] of this.errorOccurrences.entries()) {
+    for (const [signature, occurrence] of Array.from(this.errorOccurrences.entries())) {
       if (signature !== currentSignature) {
         // Simple similarity check - in real implementation would use more sophisticated matching
         const similarity = this.calculateSimilarity(signature, currentSignature);
@@ -1065,7 +1065,7 @@ export class ErrorTracker {
       affected_sessions: new Set<string>(),
     };
 
-    for (const occurrence of this.errorOccurrences.values()) {
+    for (const occurrence of Array.from(this.errorOccurrences.values())) {
       stats.total_errors += occurrence.count;
 
       if (occurrence.resolved) {
@@ -1079,8 +1079,12 @@ export class ErrorTracker {
         case 'low': stats.low_errors++; break;
       }
 
-      occurrence.affectedUsers.forEach(user => stats.affected_users.add(user));
-      occurrence.affectedSessions.forEach(session => stats.affected_sessions.add(session));
+      occurrence.affectedUsers.forEach(user => {
+        stats.affected_users.add(user);
+      });
+      occurrence.affectedSessions.forEach(session => {
+        stats.affected_sessions.add(session);
+      });
     }
 
     return {
@@ -1143,5 +1147,4 @@ export async function trackError(
 }
 
 // Constitutional compliance exports
-export { ErrorTracker };
 export default getErrorTracker;

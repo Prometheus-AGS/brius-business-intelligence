@@ -187,7 +187,7 @@ openAIRouter.get('/docs', (req: Request, res: Response) => {
         path: '/v1/chat/completions',
         description: 'Create chat completions with intelligent agent routing',
         parameters: {
-          model: 'string (business-intelligence, default-assistant, orchestrator)',
+          model: 'string (business-intelligence, default-assistant)',
           messages: 'array of message objects',
           stream: 'boolean (optional, default: false)',
           temperature: 'number (optional, 0-2)',
@@ -238,11 +238,6 @@ openAIRouter.get('/docs', (req: Request, res: Response) => {
         description: 'Fast assistant for simple queries',
         use_cases: ['Quick questions', 'Basic calculations', 'General guidance'],
         capabilities: ['Fast responses', 'Simple reasoning', 'Basic tools'],
-      },
-      'orchestrator': {
-        description: 'Intelligent query routing system',
-        use_cases: ['Automatic agent selection', 'Query classification'],
-        capabilities: ['Intent analysis', 'Complexity scoring', 'Fallback handling'],
       },
     },
   };

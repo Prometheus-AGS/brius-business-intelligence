@@ -1,9 +1,10 @@
 import { EventEmitter } from 'events';
 import { mcpClient, MCPConnection } from './client.js';
+import { mastraMCPClientManager, type MastraMCPConnection } from './mastra-client.js';
 import { mcpProcessManager, ProcessInfo } from './process-manager.js';
 import { mcpToolRegistry, ToolExecutionResponse } from './registry.js';
 import { mcpLogger } from '../observability/logger.js';
-import { AgentTracer } from '../observability/langfuse.js';
+import { AgentTracer, createTrace, createSpan, endSpan } from '../observability/langfuse.js';
 
 /**
  * MCP Tool Execution Monitoring and Error Handling
@@ -266,7 +267,7 @@ export class MCPMonitoringSystem extends EventEmitter {
 
     mcpLogger.debug('Tool execution tracked', {
       execution_id: execution.id,
-      tool_id: response.toolId,
+      tool_id: execution.toolId,
       success: execution.success,
       execution_time: execution.executionTime,
     });
@@ -296,7 +297,7 @@ export class MCPMonitoringSystem extends EventEmitter {
     // Trace to LangFuse
     this.traceErrorToLangFuse(error, context);
 
-    mcpLogger.error('Error tracked in monitoring', error, context);
+    mcpLogger.error('Error tracked in monitoring', { error: error.message, context });
   }
 
   /**
@@ -410,11 +411,6 @@ export class MCPMonitoringSystem extends EventEmitter {
    * Setup event listeners
    */
   private setupEventListeners(): void {
-    // Listen to tool execution events
-    mcpToolRegistry.on('tool:executed', (toolCall, result) => {
-      this.trackToolExecution(result);
-    });
-
     // Listen to connection events
     mcpClient.on('connection:established', (serverId, connection) => {
       this.handleConnectionEvent('established', serverId, connection);
@@ -440,7 +436,7 @@ export class MCPMonitoringSystem extends EventEmitter {
    * Perform health checks on all servers
    */
   private async performHealthChecks(): Promise<void> {
-    const connections = mcpClient.getAllConnections();
+    const connections = mastraMCPClientManager.getAllConnections();
 
     for (const connection of connections) {
       try {
@@ -458,7 +454,7 @@ export class MCPMonitoringSystem extends EventEmitter {
   /**
    * Perform health check on specific server
    */
-  private async performServerHealthCheck(connection: MCPConnection): Promise<MCPHealthCheck> {
+  private async performServerHealthCheck(connection: MastraMCPConnection): Promise<MCPHealthCheck> {
     const startTime = Date.now();
     let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
     let error: string | undefined;
@@ -482,7 +478,7 @@ export class MCPMonitoringSystem extends EventEmitter {
 
       // Check tool success rate
       const recentExecutions = this.executionHistory
-        .filter(exec => exec.serverId === connection.serverId)
+        .filter(exec => exec.metadata.serverId === connection.serverId)
         .slice(-20); // Last 20 executions
 
       let toolSuccessRate = 1.0;
@@ -568,7 +564,7 @@ export class MCPMonitoringSystem extends EventEmitter {
     };
 
     // Connection metrics
-    const connections = mcpClient.getAllConnections();
+    const connections = mastraMCPClientManager.getAllConnections();
     const activeConnections = connections.filter(conn => conn.status === 'connected').length;
     const failedConnections = connections.filter(conn => conn.status === 'failed').length;
 
@@ -615,7 +611,7 @@ export class MCPMonitoringSystem extends EventEmitter {
    * Evaluate alert rules
    */
   private evaluateAlertRules(): void {
-    for (const rule of this.alertRules.values()) {
+    for (const rule of Array.from(this.alertRules.values())) {
       if (!rule.enabled) continue;
 
       try {
@@ -643,9 +639,10 @@ export class MCPMonitoringSystem extends EventEmitter {
    */
   private getMetricValue(metricName: string): number {
     switch (metricName) {
-      case 'error_rate_percentage':
+      case 'error_rate_percentage': {
         const { total, failed } = this.metrics.tool_executions;
         return total > 0 ? (failed / total) * 100 : 0;
+      }
 
       case 'available_servers_count':
         return this.metrics.server_health.healthy_servers;
@@ -653,10 +650,11 @@ export class MCPMonitoringSystem extends EventEmitter {
       case 'avg_execution_time_ms':
         return this.metrics.tool_executions.avg_execution_time;
 
-      case 'connection_failure_rate':
+      case 'connection_failure_rate': {
         const { active_connections, failed_connections } = this.metrics.connection_metrics;
         const totalConns = active_connections + failed_connections;
         return totalConns > 0 ? (failed_connections / totalConns) * 100 : 0;
+      }
 
       default:
         throw new Error(`Unknown metric: ${metricName}`);
@@ -714,7 +712,7 @@ export class MCPMonitoringSystem extends EventEmitter {
   /**
    * Handle connection events
    */
-  private handleConnectionEvent(event: string, serverId: string, connection: MCPConnection): void {
+  private handleConnectionEvent(event: string, serverId: string, connection: MastraMCPConnection): void {
     mcpLogger.info('Connection event handled', {
       event,
       server_id: serverId,
@@ -746,31 +744,37 @@ export class MCPMonitoringSystem extends EventEmitter {
    */
   private traceExecutionToLangFuse(execution: ToolExecutionResponse): void {
     try {
-      const tracer = new AgentTracer('mcp-tool-execution', {
-        userId: 'system', // System execution
-        input: { tool_id: execution.toolId },
+      const trace = createTrace('mcp-tool-execution', {
+        userId: 'system',
         metadata: {
           tool_id: execution.toolId,
           execution_id: execution.id,
           server_id: execution.metadata.serverId,
-          namespace: execution.metadata.namespace,
-          success: execution.success,
-          execution_time_ms: execution.executionTime,
         },
+        tags: ['mcp', 'tool-execution'],
       });
 
-      tracer.end({
-        output: execution.success ? execution.result : { error: execution.error },
-        usage: {
-          total_tokens: 0, // MCP tools don't use tokens
-          prompt_tokens: 0,
-          completion_tokens: 0,
-        },
-        metadata: {
-          success: execution.success,
-          execution_time_ms: execution.executionTime,
-        },
-      });
+      if (trace) {
+        const span = createSpan(trace, execution.toolId, {
+          input: { tool_id: execution.toolId },
+          metadata: {
+            execution_id: execution.id,
+            server_id: execution.metadata.serverId,
+            },
+        });
+
+        if (span) {
+          endSpan(span, {
+            output: execution.success ? execution.result : { error: execution.error },
+            metadata: {
+              success: execution.success,
+              execution_time_ms: execution.executionTime,
+            },
+            level: execution.success ? 'DEFAULT' : 'ERROR',
+            statusMessage: execution.success ? 'Success' : execution.error,
+          });
+        }
+      }
 
     } catch (error) {
       mcpLogger.warn('Failed to trace execution to LangFuse', {
@@ -785,24 +789,38 @@ export class MCPMonitoringSystem extends EventEmitter {
    */
   private traceErrorToLangFuse(error: Error, context: any): void {
     try {
-      const tracer = new AgentTracer('mcp-error', {
+      const trace = createTrace('mcp-error', {
         userId: 'system',
-        input: { context },
         metadata: {
           error_type: error.name,
           error_message: error.message,
           context,
         },
+        tags: ['mcp', 'error'],
       });
 
-      tracer.end({
-        error: error.message,
-        metadata: {
-          error_type: error.name,
-          stack_trace: error.stack,
-          context,
-        },
-      });
+      if (trace) {
+        const span = createSpan(trace, 'error-event', {
+          input: { context },
+          metadata: {
+            error_type: error.name,
+            error_message: error.message,
+          },
+        });
+
+        if (span) {
+          endSpan(span, {
+            output: { error: error.message },
+            metadata: {
+              error_type: error.name,
+              stack_trace: error.stack,
+              context,
+            },
+            level: 'ERROR',
+            statusMessage: error.message,
+          });
+        }
+      }
 
     } catch (traceError) {
       mcpLogger.warn('Failed to trace error to LangFuse', {

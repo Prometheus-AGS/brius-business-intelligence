@@ -123,8 +123,6 @@ export class MastraMCPServer extends EventEmitter {
         sse: {
           port: 3001,
           host: '0.0.0.0',
-          path: '/mcp/sse',
-          messagePath: '/mcp/message',
           ...defaultSSETransportOptions,
           ...config.transport.sse,
         },
@@ -174,10 +172,12 @@ export class MastraMCPServer extends EventEmitter {
     // Initialize tracing if enabled
     if (this.config.options.enableTracing) {
       this.tracer = new MCPTracer('mastra-mcp-server', `server-${Date.now()}`, {
-        serverName: this.config.name,
-        version: this.config.version,
-        transport: this.config.transport.type,
-        environment: this.config.environment,
+        metadata: {
+          serverName: this.config.name,
+          version: this.config.version,
+          transport: this.config.transport.type,
+          environment: this.config.environment,
+        },
       });
     }
 
@@ -218,8 +218,14 @@ export class MastraMCPServer extends EventEmitter {
       const protocolOptions: MCPServerOptions = {
         name: this.config.name,
         version: this.config.version,
-        tools: allTools,
-        resources: [], // Could be extended with custom resources
+        description: this.config.description,
+        capabilities: {
+          tools: allTools.length > 0,
+          resources: false,
+          prompts: false,
+          logging: true,
+        },
+        transport: this.config.transport.type === 'sse' ? 'sse' : 'stdio',
         enableTracing: this.config.options.enableTracing,
       };
 
@@ -270,7 +276,7 @@ export class MastraMCPServer extends EventEmitter {
       throw new Error('Protocol handler not initialized');
     }
 
-    await this.protocolHandler.start('stdio');
+    await this.protocolHandler.start();
 
     rootLogger.info('Stdio transport started', {
       name: this.config.name,
@@ -388,8 +394,8 @@ export class MastraMCPServer extends EventEmitter {
     // Start HTTP server
     await new Promise<void>((resolve, reject) => {
       this.httpServer!.listen(
-        this.config.transport.sse.port,
-        this.config.transport.sse.host,
+        this.config.transport.sse!.port,
+        this.config.transport.sse!.host,
         () => {
           rootLogger.info('HTTP SSE transport started', {
             name: this.config.name,
@@ -406,7 +412,7 @@ export class MastraMCPServer extends EventEmitter {
     });
 
     // Start protocol handler with SSE transport
-    await this.protocolHandler.start('sse', this.sseTransport);
+    await this.protocolHandler.start();
   }
 
   /**
@@ -512,8 +518,10 @@ export class MastraMCPServer extends EventEmitter {
       // Complete tracing
       if (this.tracer) {
         this.tracer.end({
-          uptime: this.getUptime(),
-          stats: this.stats,
+          metadata: {
+            uptime: this.getUptime(),
+            stats: this.stats,
+          },
         });
       }
 
@@ -709,7 +717,7 @@ export const defaultMCPServerConfig: MastraMCPServerConfig = {
     enableAgents: true,
     enableWorkflows: true,
     enableKnowledge: true,
-    EnableMemory: true,
+    enableMemory: true,
     customTools: [],
   },
   options: {

@@ -1,6 +1,5 @@
 import { randomUUID } from 'crypto';
-import { mcpLogger, trackPerformance } from './logger.js';
-import { WorkflowTracer } from './langfuse.js';
+import { mcpLogger } from './logger.js';
 
 /**
  * Comprehensive Tracing System
@@ -316,7 +315,7 @@ export const traceManager = new TraceManager();
 /**
  * Agent execution tracer
  */
-export class AgentTracer {
+class AgentTracer {
   private span: TraceSpan;
   private agentName: string;
 
@@ -430,7 +429,7 @@ export class AgentTracer {
 /**
  * Workflow execution tracer
  */
-export class WorkflowExecutionTracer {
+class WorkflowExecutionTracer {
   private span: TraceSpan;
   private workflowName: string;
   private stepTraces = new Map<string, TraceSpan>();
@@ -579,7 +578,7 @@ export class WorkflowExecutionTracer {
 /**
  * API request tracer
  */
-export class APITracer {
+class APITracer {
   private span: TraceSpan;
 
   constructor(
@@ -690,7 +689,7 @@ export class APITracer {
 /**
  * Utility function to wrap operations with tracing
  */
-export async function traceOperation<T>(
+async function traceOperation<T>(
   operationType: TraceContext['operationType'],
   operationName: string,
   operation: (tracer: TraceSpan) => Promise<T>,

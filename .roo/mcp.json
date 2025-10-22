@@ -1,6 +1,28 @@
-{"mcpServers":{
+{
+  "mcpServers": {
     "mastra": {
       "command": "npx",
-      "args": ["-y", "@mastra/mcp-docs-server"]
+      "args": [
+        "-y",
+        "@mastra/mcp-docs-server"
+      ]
+    },
+    "brius-supabase": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@supabase/mcp-server-supabase@latest",
+        "--project-ref=gyyottknjakkagswebwh",
+        "--features=database,docs,functions"
+      ],
+      "env": {
+        "SUPABASE_URL": "https://gyyottknjakkagswebwh.supabase.co",
+        "SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd5eW90dGtuamFra2Fnc3dlYndoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA2OTI1MzAsImV4cCI6MjA3NjI2ODUzMH0.nSGxrkJF6DPYgB8sw6IayF9eL2dPrLgfAxy9wkPcZDs",
+        "SUPABASE_ACCESS_TOKEN": "sbp_dba09a21f39ef6f6c4e83aff0b07a9442a702b45"
+      },
+      "alwaysAllow": [
+        "list_tables"
+      ]
     }
-}}
+  }
+}

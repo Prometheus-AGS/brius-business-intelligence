@@ -34,14 +34,12 @@ const envSchema = z.object({
   TRACING_MAX_OUTPUT_SIZE: z.string().default('100000'),
   OBSERVABILITY_DASHBOARD_ENABLED: z.string().default('true'),
 
-  // OpenAI Configuration
-  OPENAI_API_KEY: z.string().min(1),
-
   // AWS Bedrock Configuration
   AWS_ACCESS_KEY_ID: z.string().min(1),
   AWS_SECRET_ACCESS_KEY: z.string().min(1),
   AWS_REGION: z.string().default('us-east-1'),
-  BEDROCK_EMBEDDING_MODEL: z.string().default('amazon.titan-embed-text-v2'),
+  BEDROCK_CLAUDE_MODEL_ID: z.string().default('anthropic.claude-3-5-sonnet-20240620-v1:0'),
+  BEDROCK_TITAN_MODEL_ID: z.string().default('amazon.titan-embed-text-v2'),
 
   // MCP Server Configuration (Constitutional Requirement)
   MCP_SERVER_PORT: z.string().default('3001'),
@@ -49,6 +47,10 @@ const envSchema = z.object({
   MCP_CONFIG_PATH: z.string().default('./mcp.json'),
   SUPABASE_PROJECT_REF: z.string().optional(),
   SUPABASE_ACCESS_TOKEN: z.string().optional(),
+
+  // Supabase Direct Client Configuration
+  SUPABASE_URL: z.string().url().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
 
   // Playground Configuration
   PLAYGROUND_ENABLED: z.string().default('true'),

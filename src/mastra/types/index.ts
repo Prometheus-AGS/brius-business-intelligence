@@ -22,5 +22,8 @@ export * from './api.js';
 // Observability and tracing types
 export * from './observability.js';
 
+// Bedrock LLM service types
+export * from './bedrock.js';
+
 // Re-export commonly used Zod for validation
 export { z } from 'zod';

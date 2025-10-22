@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { mcpClient, MCPConnection } from '../../mcp/client.js';
+import { mcpClient } from '../../mcp/client.js';
 import { mcpProcessManager } from '../../mcp/process-manager.js';
 import { mcpConfigLoader } from '../../mcp/config-loader.js';
-import { mcpToolRegistrationManager } from '../../tools/mcp-registry.js';
+import { getMCPToolRegistrationManager } from '../../tools/mcp-registry.js';
 import { apiLogger } from '../../observability/logger.js';
 import { APITracer } from '../../observability/tracing.js';
 
@@ -17,11 +17,6 @@ import { APITracer } from '../../observability/tracing.js';
 const ConnectServerSchema = z.object({
   serverId: z.string().min(1),
   configPath: z.string().optional(),
-});
-
-const UpdateServerConfigSchema = z.object({
-  serverId: z.string().min(1),
-  config: z.record(z.any()),
 });
 
 const ServerActionSchema = z.object({
@@ -643,10 +638,23 @@ export async function getToolRegistrationStats(req: Request, res: Response): Pro
     });
 
     // Get registration statistics
-    const registrationStats = mcpToolRegistrationManager.getRegistrationStats();
+    const manager = getMCPToolRegistrationManager();
+    if (!manager) {
+      res.status(500).json({
+        error: {
+          message: 'MCP Tool Registration Manager not initialized',
+          type: 'internal_server_error',
+          code: 'registration_manager_not_initialized',
+        },
+      });
+      tracer.fail(new Error('Registration manager not initialized'), 500);
+      return;
+    }
+
+    const registrationStats = manager.getRegistrationStats();
 
     // Get all registered tools
-    const registeredTools = mcpToolRegistrationManager.getAllRegisteredTools();
+    const registeredTools = manager.getAllRegisteredTools();
 
     const response = {
       success: true,
@@ -718,13 +726,26 @@ export async function refreshServerTools(req: Request, res: Response): Promise<v
     });
 
     // Refresh tool registrations for the server
-    const refreshedTools = await mcpToolRegistrationManager.refreshServerTools(serverId);
+    const manager = getMCPToolRegistrationManager();
+    if (!manager) {
+      res.status(500).json({
+        error: {
+          message: 'MCP Tool Registration Manager not initialized',
+          type: 'internal_server_error',
+          code: 'registration_manager_not_initialized',
+        },
+      });
+      tracer.fail(new Error('Registration manager not initialized'), 500);
+      return;
+    }
+
+    const refreshedTools = await manager.refreshServerTools(serverId);
 
     const response = {
       success: true,
       data: {
         server_id: serverId,
-        refreshed_tools: refreshedTools.map(tool => ({
+        refreshed_tools: refreshedTools.map((tool: any) => ({
           id: tool.id,
           description: tool.description,
         })),

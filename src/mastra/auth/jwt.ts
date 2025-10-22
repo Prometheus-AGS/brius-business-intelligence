@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { env } from '../config/environment.js';
-import { JWTPayload, AuthContext } from '../types/index.js';
+import { JWTPayloadSchema, type JWTPayload, type AuthContext } from '../types/index.js';
 
 /**
  * JWT Authentication and Validation
@@ -26,7 +26,7 @@ function decodeJWT(token: string): JWTPayload | null {
     );
 
     // Validate the payload structure
-    const validatedPayload = JWTPayload.parse(payload);
+    const validatedPayload = JWTPayloadSchema.parse(payload);
 
     // Check if token is expired
     const now = Math.floor(Date.now() / 1000);
