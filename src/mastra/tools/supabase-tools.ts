@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../config/environment.js';
+import { rootLogger } from '../observability/logger.js';
 
 // Initialize Supabase client with service role key
 let supabaseClient: SupabaseClient | null = null;
@@ -174,6 +175,8 @@ export const executeSqlTool = {
   }),
   execute: async (args: any) => {
     const client = getSupabaseClient();
+    const startTime = Date.now();
+    const executionId = `sql_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     try {
       // Handle multiple parameter patterns
@@ -191,8 +194,19 @@ export const executeSqlTool = {
         query = '';
       }
       
+      // Enhanced logging for debugging and observability (avoiding circular references)
+      rootLogger.info('🔍 SUPABASE EXECUTE SQL TOOL CALLED', {
+        execution_id: executionId,
+        tool_id: 'supabase-execute-sql',
+        args_type: typeof args,
+        extracted_query: query,
+        query_length: query.length,
+        has_context: !!(args && args.context),
+        timestamp: new Date().toISOString(),
+      });
+
       console.log('🔍 [DEBUG] Execute SQL tool called with:', {
-        args: JSON.stringify(args, null, 2).substring(0, 500) + '...',
+        executionId,
         extractedQuery: query,
         argType: typeof args,
         hasContext: !!(args && args.context),
@@ -202,12 +216,12 @@ export const executeSqlTool = {
 
       // Ensure query parameter is defined and is a string
       if (!query || typeof query !== 'string') {
-        return {
+        const errorResult = {
           success: false,
           error: 'Query parameter is required and must be a string',
           query: query || 'undefined',
+          execution_id: executionId,
           debug: {
-            receivedArgs: typeof args === 'object' ? JSON.stringify(args, null, 2).substring(0, 200) : args,
             extractedQuery: query,
             argType: typeof args,
             hasContext: !!(args && args.context),
@@ -215,39 +229,108 @@ export const executeSqlTool = {
             directQuery: args && args.query ? args.query : 'N/A',
           },
         };
+
+        rootLogger.error('❌ SUPABASE SQL EXECUTION FAILED - INVALID QUERY', {
+          execution_id: executionId,
+          tool_id: 'supabase-execute-sql',
+          error: errorResult.error,
+          execution_time_ms: Date.now() - startTime,
+        });
+
+        return errorResult;
       }
 
       // Execute the SQL using the enhanced exec_sql RPC function that returns JSON results
+      rootLogger.info('🚀 EXECUTING SQL QUERY', {
+        execution_id: executionId,
+        tool_id: 'supabase-execute-sql',
+        query: query.substring(0, 200) + (query.length > 200 ? '...' : ''),
+        query_length: query.length,
+      });
+
       const { data, error } = await client.rpc('exec_sql', {
         sql: query.trim()
       });
 
+      const executionTime = Date.now() - startTime;
+
       if (error) {
-        return {
+        const errorResult = {
           success: false,
           error: `SQL execution failed: ${error.message}`,
           query: query,
+          execution_id: executionId,
+          execution_time_ms: executionTime,
         };
+
+        rootLogger.error('❌ SUPABASE SQL EXECUTION FAILED - DATABASE ERROR', {
+          execution_id: executionId,
+          tool_id: 'supabase-execute-sql',
+          error: error.message,
+          query: query.substring(0, 200) + (query.length > 200 ? '...' : ''),
+          execution_time_ms: executionTime,
+        });
+
+        return errorResult;
       }
 
-      return {
+      const successResult = {
         success: true,
         result: data,
         query: query,
+        execution_id: executionId,
+        execution_time_ms: executionTime,
         note: 'SQL executed successfully via enhanced exec_sql RPC function',
+        message: `Query executed successfully. Results: ${JSON.stringify(data)}. Please interpret these results and provide a clear answer to the user's question.`,
       };
 
+      // Comprehensive success logging
+      rootLogger.info('✅ SUPABASE SQL EXECUTION SUCCESSFUL', {
+        execution_id: executionId,
+        tool_id: 'supabase-execute-sql',
+        query: query.substring(0, 200) + (query.length > 200 ? '...' : ''),
+        result_type: Array.isArray(data) ? 'array' : typeof data,
+        result_length: Array.isArray(data) ? data.length : 1,
+        result_preview: JSON.stringify(data).substring(0, 500) + (JSON.stringify(data).length > 500 ? '...' : ''),
+        execution_time_ms: executionTime,
+        success: true,
+      });
+
+      console.log('✅ [SUCCESS] SQL execution completed:', {
+        executionId,
+        query: query.substring(0, 100) + '...',
+        resultType: Array.isArray(data) ? 'array' : typeof data,
+        resultLength: Array.isArray(data) ? data.length : 1,
+        executionTime: `${executionTime}ms`,
+        success: true,
+      });
+
+      return successResult;
+
     } catch (error) {
-      return {
+      const executionTime = Date.now() - startTime;
+      const errorResult = {
         success: false,
         error: error instanceof Error ? error.message : String(error),
         query: args?.query || 'undefined',
+        execution_id: executionId,
+        execution_time_ms: executionTime,
         note: 'Make sure the "exec_sql" RPC function is available in your Supabase project',
         debug: {
-          receivedArgs: args,
           errorStack: error instanceof Error ? error.stack : undefined,
         },
       };
+
+      rootLogger.error('❌ SUPABASE SQL EXECUTION FAILED - EXCEPTION', {
+        execution_id: executionId,
+        tool_id: 'supabase-execute-sql',
+        error: error instanceof Error ? error.message : String(error),
+        query: args?.query || 'undefined',
+        execution_time_ms: executionTime,
+        error_stack: error instanceof Error ? error.stack : undefined,
+      });
+
+      return errorResult;
     }
   },
 };

@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:orthodontic": "vitest run tests/orthodontic-intelligence.test.ts",
     "typecheck": "tsc --noEmit",
     "prebuild": "npm run typecheck",
     "dev": "mastra dev",

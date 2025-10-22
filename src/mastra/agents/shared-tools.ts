@@ -4,6 +4,7 @@ import { bedrockTools } from '../tools/bedrock-tools.js';
 import { supabaseTools } from '../tools/supabase-tools.js';
 import { memoryTools } from '../tools/memory-tools.js';
 import { knowledgeSearchTools } from '../tools/knowledge-search.js';
+import { orthodonticIntelligenceTools } from '../tools/orthodontic-intelligence-tools.js';
 import type { BedrockTool } from '../types/bedrock.js';
 import { mcpToolRegistry } from '../mcp/registry.js';
 import { rootLogger } from '../observability/logger.js';
@@ -85,21 +86,26 @@ function refreshToolCache() {
     // Convert custom Supabase tools to Mastra Tool format
     const convertedSupabaseTools = supabaseTools.map(convertSupabaseToolToMastraTool);
 
+    // Convert orthodontic intelligence tools to Mastra Tool format
+    const convertedOrthodonticTools = orthodonticIntelligenceTools.map(convertSupabaseToolToMastraTool);
+
     rootLogger.info('🔥 REFRESHING TOOL CACHE', {
       mcp_tools_count: mcpTools.length,
       bedrock_tools_count: bedrockTools.length,
       supabase_tools_count: convertedSupabaseTools.length,
+      orthodontic_tools_count: convertedOrthodonticTools.length,
       memory_tools_count: memoryTools.length,
       knowledge_tools_count: knowledgeSearchTools.length,
       mcp_tool_ids: mcpTools.map(t => t.id),
       supabase_tool_ids: convertedSupabaseTools.map(t => t.id),
+      orthodontic_tool_ids: convertedOrthodonticTools.map(t => t.id),
       memory_tool_ids: memoryTools.map(t => t.id),
       knowledge_tool_ids: knowledgeSearchTools.map(t => t.id),
       mcp_tools_sample: mcpTools.slice(0, 3).map(t => ({ id: t.id, description: t.description })),
     });
 
-    // Combine MCP tools, Bedrock tools, custom Supabase tools, memory tools, and knowledge search tools
-    const allTools = [...mcpTools, ...convertedBedrockTools, ...convertedSupabaseTools, ...memoryTools, ...knowledgeSearchTools];
+    // Combine all tools including orthodontic intelligence tools
+    const allTools = [...mcpTools, ...convertedBedrockTools, ...convertedSupabaseTools, ...convertedOrthodonticTools, ...memoryTools, ...knowledgeSearchTools];
 
     cachedToolMap = allTools.reduce<Record<string, any>>((acc, tool) => {
       acc[tool.id] = tool;
@@ -116,10 +122,11 @@ function refreshToolCache() {
       error: error instanceof Error ? error.message : String(error),
     });
 
-    // Fallback to Bedrock tools, custom Supabase tools, memory tools, and knowledge search tools
+    // Fallback to Bedrock tools, custom Supabase tools, orthodontic tools, memory tools, and knowledge search tools
     const convertedBedrockTools = bedrockTools.map(convertBedrockToolToMastraTool);
     const convertedSupabaseTools = supabaseTools.map(convertSupabaseToolToMastraTool);
-    const fallbackTools = [...convertedBedrockTools, ...convertedSupabaseTools, ...memoryTools, ...knowledgeSearchTools];
+    const convertedOrthodonticTools = orthodonticIntelligenceTools.map(convertSupabaseToolToMastraTool);
+    const fallbackTools = [...convertedBedrockTools, ...convertedSupabaseTools, ...convertedOrthodonticTools, ...memoryTools, ...knowledgeSearchTools];
 
     cachedToolMap = fallbackTools.reduce<Record<string, any>>((acc, tool) => {
       acc[tool.id] = tool;
@@ -157,15 +164,17 @@ export function getToolCounts(): {
   mcp: number;
   bedrock: number;
   supabase: number;
+  orthodontic: number;
 } {
   try {
     const mcpTools = getMCPTools();
 
     return {
-      total: mcpTools.length + bedrockTools.length + supabaseTools.length,
+      total: mcpTools.length + bedrockTools.length + supabaseTools.length + orthodonticIntelligenceTools.length,
       mcp: mcpTools.length,
       bedrock: bedrockTools.length,
       supabase: supabaseTools.length,
+      orthodontic: orthodonticIntelligenceTools.length,
     };
   } catch (error) {
     rootLogger.warn('🔥 FAILED TO GET TOOL COUNTS', {
@@ -173,10 +182,11 @@ export function getToolCounts(): {
     });
 
     return {
-      total: bedrockTools.length + supabaseTools.length,
+      total: bedrockTools.length + supabaseTools.length + orthodonticIntelligenceTools.length,
       mcp: 0,
       bedrock: bedrockTools.length,
       supabase: supabaseTools.length,
+      orthodontic: orthodonticIntelligenceTools.length,
     };
   }
 }
