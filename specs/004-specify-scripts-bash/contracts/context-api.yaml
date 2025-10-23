@@ -1,0 +1,436 @@
+openapi: 3.0.3
+info:
+  title: Business Intelligence Context Management API
+  description: API for managing user context, JWT tokens, and session state in the BI system
+  version: 1.0.0
+  contact:
+    name: Brius BI Team
+
+servers:
+  - url: /api/v1/context
+    description: Context management endpoints
+
+security:
+  - BearerAuth: []
+
+paths:
+  /session:
+    post:
+      summary: Initialize new analysis session
+      description: Creates a new BI analysis session with user context extraction from JWT
+      operationId: initializeSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionType:
+                  type: string
+                  enum: [interactive, automated, batch]
+                preferences:
+                  $ref: '#/components/schemas/UserPreferences'
+      responses:
+        '201':
+          description: Session created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '400':
+          description: Invalid request parameters
+        '401':
+          description: Invalid or expired JWT token
+        '403':
+          description: Insufficient permissions
+
+    get:
+      summary: Get current session status
+      description: Retrieves current session information and context state
+      operationId: getSessionStatus
+      responses:
+        '200':
+          description: Session status retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStatus'
+        '404':
+          description: Session not found
+
+  /session/{sessionId}/context:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      summary: Get session context
+      description: Retrieves full context information for a session
+      operationId: getSessionContext
+      responses:
+        '200':
+          description: Context retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserContext'
+        '404':
+          description: Session or context not found
+
+    put:
+      summary: Update session context
+      description: Updates context state with new information
+      operationId: updateSessionContext
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContextUpdate'
+      responses:
+        '200':
+          description: Context updated successfully
+        '400':
+          description: Invalid context data
+        '409':
+          description: Context corruption detected
+
+  /session/{sessionId}/refresh:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      summary: Refresh JWT token
+      description: Performs background JWT token refresh for session continuity
+      operationId: refreshToken
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  newToken:
+                    type: string
+                  expiresAt:
+                    type: string
+                    format: date-time
+        '401':
+          description: Token refresh failed
+        '403':
+          description: Refresh not authorized
+
+  /session/{sessionId}/recover:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    post:
+      summary: Recover corrupted context
+      description: Attempts to reconstruct context from session history
+      operationId: recoverContext
+      responses:
+        '200':
+          description: Context recovered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryResult'
+        '206':
+          description: Partial recovery completed
+        '424':
+          description: Recovery failed, degraded mode activated
+
+  /permissions:
+    get:
+      summary: Get user permissions
+      description: Retrieves role-based permissions with department/region filtering
+      operationId: getUserPermissions
+      responses:
+        '200':
+          description: Permissions retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPermissions'
+
+  /memory:
+    get:
+      summary: Get user memory entries
+      description: Retrieves user-specific memory and knowledge base entries
+      operationId: getUserMemory
+      parameters:
+        - name: scope
+          in: query
+          schema:
+            type: string
+            enum: [user, global, all]
+          description: Memory scope filter
+        - name: contentType
+          in: query
+          schema:
+            type: string
+            enum: [conversation, knowledge, preference]
+      responses:
+        '200':
+          description: Memory entries retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemoryEntries'
+
+    post:
+      summary: Store memory entry
+      description: Creates new user-scoped or global memory entry
+      operationId: storeMemory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemoryEntry'
+      responses:
+        '201':
+          description: Memory entry created
+        '400':
+          description: Invalid memory data
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    UserContext:
+      type: object
+      required:
+        - userId
+        - sessionId
+        - roleId
+        - departmentScope
+        - permissions
+      properties:
+        userId:
+          type: string
+          format: uuid
+        sessionId:
+          type: string
+          format: uuid
+        roleId:
+          type: string
+          example: "business-analyst"
+        departmentScope:
+          type: array
+          items:
+            type: string
+          example: ["cardiology", "north-region"]
+        permissions:
+          $ref: '#/components/schemas/PermissionMatrix'
+        preferences:
+          $ref: '#/components/schemas/UserPreferences'
+        lastActivity:
+          type: string
+          format: date-time
+        tokenExpiry:
+          type: string
+          format: date-time
+
+    PermissionMatrix:
+      type: object
+      properties:
+        clinical:
+          $ref: '#/components/schemas/DomainPermissions'
+        financial:
+          $ref: '#/components/schemas/DomainPermissions'
+        operational:
+          $ref: '#/components/schemas/DomainPermissions'
+        customerService:
+          $ref: '#/components/schemas/DomainPermissions'
+
+    DomainPermissions:
+      type: object
+      properties:
+        read:
+          type: boolean
+        query:
+          type: boolean
+        export:
+          type: boolean
+        departments:
+          type: array
+          items:
+            type: string
+
+    UserPreferences:
+      type: object
+      properties:
+        defaultVisualization:
+          type: string
+          enum: [chart, table, graph]
+        timezone:
+          type: string
+          example: "America/Chicago"
+        language:
+          type: string
+          example: "en-US"
+        theme:
+          type: string
+          enum: [light, dark, auto]
+
+    SessionResponse:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, initializing]
+        expiresAt:
+          type: string
+          format: date-time
+        context:
+          $ref: '#/components/schemas/UserContext'
+
+    SessionStatus:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, paused, completed, failed, degraded]
+        startTime:
+          type: string
+          format: date-time
+        lastActivity:
+          type: string
+          format: date-time
+        queryCount:
+          type: integer
+        domainsAccessed:
+          type: array
+          items:
+            type: string
+
+    ContextUpdate:
+      type: object
+      properties:
+        preferences:
+          $ref: '#/components/schemas/UserPreferences'
+        lastActivity:
+          type: string
+          format: date-time
+        queryHistory:
+          type: array
+          items:
+            type: object
+            properties:
+              query:
+                type: string
+              timestamp:
+                type: string
+                format: date-time
+              domains:
+                type: array
+                items:
+                  type: string
+
+    RecoveryResult:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success, partial, failed]
+        recoveredElements:
+          type: array
+          items:
+            type: string
+        missingElements:
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+
+    UserPermissions:
+      type: object
+      properties:
+        userId:
+          type: string
+          format: uuid
+        roleId:
+          type: string
+        permissions:
+          $ref: '#/components/schemas/PermissionMatrix'
+        departmentScope:
+          type: array
+          items:
+            type: string
+        effectiveUntil:
+          type: string
+          format: date-time
+
+    MemoryEntry:
+      type: object
+      required:
+        - scope
+        - contentType
+        - content
+      properties:
+        memoryId:
+          type: string
+          format: uuid
+          readOnly: true
+        scope:
+          type: string
+          enum: [user, global]
+        userId:
+          type: string
+          format: uuid
+          description: Required for user scope, null for global
+        contentType:
+          type: string
+          enum: [conversation, knowledge, preference]
+        content:
+          type: object
+          description: Stored memory content
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        lastAccessed:
+          type: string
+          format: date-time
+          readOnly: true
+
+    MemoryEntries:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemoryEntry'
+        total:
+          type: integer
+        scope:
+          type: string
+          enum: [user, global, all]

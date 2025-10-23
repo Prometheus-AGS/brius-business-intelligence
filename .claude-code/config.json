@@ -10,6 +10,9 @@
             "alwaysAllow": [
                 "query"
             ]
+        },
+        "tavily": {
+            "url": "https://mcp.tavily.com/mcp/?tavilyApiKey=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"
         }
     }
 }

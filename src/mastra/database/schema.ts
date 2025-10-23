@@ -176,3 +176,190 @@ export type NewKnowledgeProcessingJob = typeof knowledgeProcessingJobs.$inferIns
 
 export type MigrationStatus = typeof migrationStatus.$inferSelect;
 export type NewMigrationStatus = typeof migrationStatus.$inferInsert;
+
+// ============================================================================
+// Business Intelligence Context Enhancement Tables
+// ============================================================================
+
+// Enums for BI feature
+export const contextStatusEnum = pgEnum('context_status', ['active', 'paused', 'completed', 'failed', 'degraded']);
+export const sessionStatusEnum = pgEnum('session_status', ['initiated', 'active', 'waiting', 'processing', 'completed', 'failed']);
+export const domainTypeEnum = pgEnum('domain_type', ['clinical', 'financial', 'operational', 'customer-service']);
+export const patternTypeEnum = pgEnum('pattern_type', ['planner-executor', 'reactive', 'streaming', 'hybrid']);
+export const memoryScopeEnum = pgEnum('memory_scope', ['user', 'global']);
+export const contentTypeEnum = pgEnum('content_type', ['conversation', 'knowledge', 'preference']);
+
+/**
+ * User Context table for managing authenticated and anonymous user sessions
+ */
+export const userContexts = pgTable('user_contexts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: uuid('user_id').notNull(),
+  sessionId: uuid('session_id').notNull().unique(),
+  roleId: text('role_id').notNull(),
+  departmentScope: jsonb('department_scope').$type<string[]>().notNull(),
+  permissions: jsonb('permissions').notNull(),
+  preferences: jsonb('preferences'),
+  lastActivity: timestamp('last_activity', { withTimezone: true }).defaultNow().notNull(),
+  tokenExpiry: timestamp('token_expiry', { withTimezone: true }).notNull(),
+  isAnonymous: integer('is_anonymous').default(0).notNull(), // Using integer for boolean compatibility
+  status: contextStatusEnum('status').default('active').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index('user_contexts_user_id_idx').on(table.userId),
+  sessionIdIdx: index('user_contexts_session_id_idx').on(table.sessionId),
+  statusIdx: index('user_contexts_status_idx').on(table.status),
+}));
+
+/**
+ * Analysis Sessions table for tracking user BI sessions
+ */
+export const analysisSessions = pgTable('analysis_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  sessionId: uuid('session_id').notNull().unique(),
+  userId: uuid('user_id').notNull(),
+  startTime: timestamp('start_time', { withTimezone: true }).defaultNow().notNull(),
+  lastQueryTime: timestamp('last_query_time', { withTimezone: true }),
+  queryHistory: jsonb('query_history').$type<any[]>().default([]),
+  contextState: jsonb('context_state').notNull(),
+  domainAccess: jsonb('domain_access').$type<string[]>().default([]),
+  status: sessionStatusEnum('status').notNull().default('active'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  userIdIdx: index('analysis_sessions_user_id_idx').on(table.userId),
+  sessionIdIdx: index('analysis_sessions_session_id_idx').on(table.sessionId),
+  statusIdx: index('analysis_sessions_status_idx').on(table.status),
+}));
+
+/**
+ * Domain Datasets table for multi-domain data integration
+ */
+export const domainDatasets = pgTable('domain_datasets', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  datasetId: uuid('dataset_id').notNull().unique(),
+  domainType: domainTypeEnum('domain_type').notNull(),
+  tableName: text('table_name').notNull(),
+  schema: jsonb('schema').notNull(),
+  relationships: jsonb('relationships').$type<any[]>().default([]),
+  accessLevel: accessLevelEnum('access_level').notNull().default('public'),
+  dataQuality: jsonb('data_quality'),
+  lastAnalyzed: timestamp('last_analyzed', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  datasetIdIdx: index('domain_datasets_dataset_id_idx').on(table.datasetId),
+  domainTypeIdx: index('domain_datasets_domain_type_idx').on(table.domainType),
+  tableNameIdx: index('domain_datasets_table_name_idx').on(table.tableName),
+}));
+
+/**
+ * Visualization Artifacts table for React component generation
+ */
+export const visualizationArtifacts = pgTable('visualization_artifacts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  artifactId: uuid('artifact_id').notNull().unique(),
+  sessionId: uuid('session_id').notNull(),
+  componentName: text('component_name').notNull(),
+  componentCode: text('component_code').notNull(),
+  dataBinding: jsonb('data_binding').notNull(),
+  styleDefinition: jsonb('style_definition').notNull(),
+  dependencies: jsonb('dependencies').$type<string[]>().default([]),
+  generationTime: timestamp('generation_time', { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  artifactIdIdx: index('visualization_artifacts_artifact_id_idx').on(table.artifactId),
+  sessionIdIdx: index('visualization_artifacts_session_id_idx').on(table.sessionId),
+  componentNameIdx: index('visualization_artifacts_component_name_idx').on(table.componentName),
+}));
+
+/**
+ * Agent Architecture Patterns table for pattern evaluation
+ */
+export const agentArchitecturePatterns = pgTable('agent_architecture_patterns', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  patternId: uuid('pattern_id').notNull().unique(),
+  patternType: patternTypeEnum('pattern_type').notNull(),
+  queryComplexity: jsonb('query_complexity').notNull(),
+  performanceMetrics: jsonb('performance_metrics').notNull(),
+  usageCount: integer('usage_count').default(0).notNull(),
+  successRate: integer('success_rate').default(0).notNull(), // Using integer for decimal * 10000
+  lastEvaluated: timestamp('last_evaluated', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  patternIdIdx: index('agent_architecture_patterns_pattern_id_idx').on(table.patternId),
+  patternTypeIdx: index('agent_architecture_patterns_pattern_type_idx').on(table.patternType),
+  usageCountIdx: index('agent_architecture_patterns_usage_count_idx').on(table.usageCount.desc()),
+}));
+
+/**
+ * Context State table for session management and recovery
+ */
+export const contextStates = pgTable('context_states', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  stateId: uuid('state_id').notNull().unique(),
+  sessionId: uuid('session_id').notNull().unique(),
+  stateData: jsonb('state_data').notNull(),
+  historyStack: jsonb('history_stack').$type<any[]>().default([]),
+  reconstructionData: jsonb('reconstruction_data'),
+  lastUpdate: timestamp('last_update', { withTimezone: true }).defaultNow().notNull(),
+  isCorrupted: integer('is_corrupted').default(0).notNull(), // Using integer for boolean compatibility
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => ({
+  stateIdIdx: index('context_states_state_id_idx').on(table.stateId),
+  sessionIdIdx: index('context_states_session_id_idx').on(table.sessionId),
+  lastUpdateIdx: index('context_states_last_update_idx').on(table.lastUpdate.desc()),
+}));
+
+// BI Feature Relations
+export const userContextsRelations = relations(userContexts, ({ many }) => ({
+  analysisSessions: many(analysisSessions),
+}));
+
+export const analysisSessionsRelations = relations(analysisSessions, ({ one, many }) => ({
+  userContext: one(userContexts, {
+    fields: [analysisSessions.userId],
+    references: [userContexts.userId],
+  }),
+  visualizationArtifacts: many(visualizationArtifacts),
+  contextState: one(contextStates, {
+    fields: [analysisSessions.sessionId],
+    references: [contextStates.sessionId],
+  }),
+}));
+
+export const visualizationArtifactsRelations = relations(visualizationArtifacts, ({ one }) => ({
+  analysisSession: one(analysisSessions, {
+    fields: [visualizationArtifacts.sessionId],
+    references: [analysisSessions.sessionId],
+  }),
+}));
+
+export const contextStatesRelations = relations(contextStates, ({ one }) => ({
+  analysisSession: one(analysisSessions, {
+    fields: [contextStates.sessionId],
+    references: [analysisSessions.sessionId],
+  }),
+}));
+
+// BI Feature Type exports
+export type UserContext = typeof userContexts.$inferSelect;
+export type NewUserContext = typeof userContexts.$inferInsert;
+
+export type AnalysisSession = typeof analysisSessions.$inferSelect;
+export type NewAnalysisSession = typeof analysisSessions.$inferInsert;
+
+export type DomainDataset = typeof domainDatasets.$inferSelect;
+export type NewDomainDataset = typeof domainDatasets.$inferInsert;
+
+export type VisualizationArtifact = typeof visualizationArtifacts.$inferSelect;
+export type NewVisualizationArtifact = typeof visualizationArtifacts.$inferInsert;
+
+export type AgentArchitecturePattern = typeof agentArchitecturePatterns.$inferSelect;
+export type NewAgentArchitecturePattern = typeof agentArchitecturePatterns.$inferInsert;
+
+export type ContextState = typeof contextStates.$inferSelect;
+export type NewContextState = typeof contextStates.$inferInsert;

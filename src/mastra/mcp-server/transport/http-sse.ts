@@ -162,6 +162,8 @@ export class HTTPSSETransport extends EventEmitter {
     // Handle origin
     if (this.options.cors.origin === true) {
       headers['Access-Control-Allow-Origin'] = req.headers.origin || '*';
+    } else if (typeof this.options.cors.origin === 'string' && this.options.cors.origin === '*') {
+      headers['Access-Control-Allow-Origin'] = '*';
     } else if (typeof this.options.cors.origin === 'string') {
       headers['Access-Control-Allow-Origin'] = this.options.cors.origin;
     } else if (Array.isArray(this.options.cors.origin)) {
@@ -216,6 +218,8 @@ export class HTTPSSETransport extends EventEmitter {
     // Add CORS headers for SSE
     if (this.options.cors.origin === true) {
       headers['Access-Control-Allow-Origin'] = req.headers.origin || '*';
+    } else if (typeof this.options.cors.origin === 'string' && this.options.cors.origin === '*') {
+      headers['Access-Control-Allow-Origin'] = '*';
     } else if (typeof this.options.cors.origin === 'string') {
       headers['Access-Control-Allow-Origin'] = this.options.cors.origin;
     }
@@ -302,6 +306,8 @@ export class HTTPSSETransport extends EventEmitter {
 
       if (this.options.cors.origin === true) {
         headers['Access-Control-Allow-Origin'] = req.headers.origin || '*';
+      } else if (typeof this.options.cors.origin === 'string' && this.options.cors.origin === '*') {
+        headers['Access-Control-Allow-Origin'] = '*';
       } else if (typeof this.options.cors.origin === 'string') {
         headers['Access-Control-Allow-Origin'] = this.options.cors.origin;
       }
@@ -645,10 +651,10 @@ export const defaultSSETransportOptions: SSETransportOptions = {
   path: '/mcp/sse',
   messagePath: '/mcp/message',
   cors: {
-    origin: true,
+    origin: '*',
     credentials: true,
-    methods: ['GET', 'POST', 'OPTIONS'],
-    headers: ['Content-Type', 'Authorization', 'Accept'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
+    headers: ['*'],
   },
   heartbeatInterval: 30000,
   maxConnections: 100,

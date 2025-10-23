@@ -139,13 +139,21 @@ export class LangFuseClient {
           flushInterval: 5000, // Flush every 5 seconds
         });
 
-        // Test connection
-        await this.performHealthCheck();
-
         this.initialized = true;
         rootLogger.info('LangFuse client initialized successfully', {
           baseUrl: env.LANGFUSE_BASE_URL,
           circuitBreakerState: this.circuitBreaker.getState().state,
+        });
+
+        // Perform health check after initialization is complete (non-blocking)
+        setImmediate(async () => {
+          try {
+            await this.performHealthCheck();
+          } catch (error) {
+            rootLogger.warn('LangFuse post-initialization health check failed', {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         });
       },
       {

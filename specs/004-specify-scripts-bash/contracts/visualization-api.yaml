@@ -1,0 +1,523 @@
+openapi: 3.0.3
+info:
+  title: Business Intelligence Visualization API
+  description: API for generating exportable React TSX components from BI analysis results
+  version: 1.0.0
+  contact:
+    name: Brius BI Team
+
+servers:
+  - url: /api/v1/visualization
+    description: Visualization generation endpoints
+
+security:
+  - BearerAuth: []
+
+paths:
+  /generate:
+    post:
+      summary: Generate React component from analysis
+      description: Creates TSX React component with embedded styling from BI analysis results
+      operationId: generateVisualization
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VisualizationRequest'
+      responses:
+        '201':
+          description: Component generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VisualizationResponse'
+        '400':
+          description: Invalid analysis data or visualization parameters
+        '422':
+          description: Analysis data incompatible with requested visualization type
+        '507':
+          description: Component generation exceeds complexity limits
+
+  /artifacts/{artifactId}:
+    parameters:
+      - name: artifactId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      summary: Get visualization artifact
+      description: Retrieves generated React component code and metadata
+      operationId: getVisualizationArtifact
+      responses:
+        '200':
+          description: Artifact retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VisualizationArtifact'
+        '404':
+          description: Artifact not found
+
+    delete:
+      summary: Delete visualization artifact
+      description: Removes generated component from system
+      operationId: deleteVisualizationArtifact
+      responses:
+        '204':
+          description: Artifact deleted successfully
+        '404':
+          description: Artifact not found
+
+  /artifacts/{artifactId}/download:
+    parameters:
+      - name: artifactId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      summary: Download component files
+      description: Downloads complete React component as TypeScript files
+      operationId: downloadComponentFiles
+      responses:
+        '200':
+          description: Component files packaged for download
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ComponentPackage'
+        '404':
+          description: Artifact not found
+
+  /templates:
+    get:
+      summary: Get available visualization templates
+      description: Lists supported visualization types and their requirements
+      operationId: getVisualizationTemplates
+      responses:
+        '200':
+          description: Templates retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VisualizationTemplates'
+
+  /validate:
+    post:
+      summary: Validate analysis data for visualization
+      description: Checks if analysis results are compatible with visualization requirements
+      operationId: validateVisualizationData
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidationRequest'
+      responses:
+        '200':
+          description: Validation completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+        '400':
+          description: Invalid validation request
+
+  /session/{sessionId}/artifacts:
+    parameters:
+      - name: sessionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+
+    get:
+      summary: List session visualizations
+      description: Gets all visualization artifacts created in an analysis session
+      operationId: getSessionArtifacts
+      responses:
+        '200':
+          description: Session artifacts retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionArtifacts'
+        '404':
+          description: Session not found
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    VisualizationRequest:
+      type: object
+      required:
+        - sessionId
+        - visualizationType
+        - analysisData
+        - componentName
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        visualizationType:
+          type: string
+          enum: [bar-chart, line-chart, pie-chart, table, scatter-plot, heatmap, dashboard]
+        analysisData:
+          $ref: '#/components/schemas/AnalysisData'
+        componentName:
+          type: string
+          pattern: '^[A-Z][a-zA-Z0-9]*$'
+          description: PascalCase React component name
+        options:
+          $ref: '#/components/schemas/VisualizationOptions'
+        styling:
+          $ref: '#/components/schemas/StylingOptions'
+
+    AnalysisData:
+      type: object
+      required:
+        - datasets
+        - schema
+      properties:
+        datasets:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataSet'
+        schema:
+          $ref: '#/components/schemas/DataSchema'
+        metadata:
+          $ref: '#/components/schemas/AnalysisMetadata'
+        relationships:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataRelationship'
+
+    DataSet:
+      type: object
+      required:
+        - name
+        - data
+      properties:
+        name:
+          type: string
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        domain:
+          type: string
+          enum: [clinical, financial, operational, customer-service]
+
+    DataSchema:
+      type: object
+      properties:
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldDefinition'
+        primaryKey:
+          type: string
+        indexes:
+          type: array
+          items:
+            type: string
+
+    FieldDefinition:
+      type: object
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [string, number, boolean, date, array, object]
+        nullable:
+          type: boolean
+        description:
+          type: string
+
+    AnalysisMetadata:
+      type: object
+      properties:
+        queryText:
+          type: string
+        executionTime:
+          type: number
+        rowCount:
+          type: integer
+        domains:
+          type: array
+          items:
+            type: string
+        generatedAt:
+          type: string
+          format: date-time
+
+    DataRelationship:
+      type: object
+      properties:
+        sourceField:
+          type: string
+        targetDataset:
+          type: string
+        targetField:
+          type: string
+        relationshipType:
+          type: string
+          enum: [one-to-one, one-to-many, many-to-many]
+
+    VisualizationOptions:
+      type: object
+      properties:
+        title:
+          type: string
+        width:
+          type: integer
+          minimum: 200
+          maximum: 2000
+        height:
+          type: integer
+          minimum: 150
+          maximum: 1500
+        interactive:
+          type: boolean
+          default: true
+        responsive:
+          type: boolean
+          default: true
+        showLegend:
+          type: boolean
+          default: true
+        showGrid:
+          type: boolean
+          default: false
+        animations:
+          type: boolean
+          default: false
+
+    StylingOptions:
+      type: object
+      properties:
+        colorScheme:
+          type: string
+          enum: [default, medical, financial, operational, custom]
+        customColors:
+          type: array
+          items:
+            type: string
+            pattern: '^#[0-9A-Fa-f]{6}$'
+        fontFamily:
+          type: string
+          default: "system-ui, sans-serif"
+        fontSize:
+          type: integer
+          minimum: 10
+          maximum: 24
+          default: 12
+        borderRadius:
+          type: integer
+          minimum: 0
+          maximum: 20
+          default: 4
+
+    VisualizationResponse:
+      type: object
+      properties:
+        artifactId:
+          type: string
+          format: uuid
+        componentName:
+          type: string
+        generationTime:
+          type: string
+          format: date-time
+        componentCode:
+          type: string
+          description: Complete TSX component source code
+        typeDefinitions:
+          type: string
+          description: TypeScript interface definitions
+        dependencies:
+          type: array
+          items:
+            type: string
+          description: Required external packages
+        metadata:
+          $ref: '#/components/schemas/ComponentMetadata'
+
+    ComponentMetadata:
+      type: object
+      properties:
+        linesOfCode:
+          type: integer
+        complexity:
+          type: string
+          enum: [low, medium, high]
+        dataBindings:
+          type: array
+          items:
+            type: string
+        propInterface:
+          type: string
+        exports:
+          type: array
+          items:
+            type: string
+
+    VisualizationArtifact:
+      type: object
+      properties:
+        artifactId:
+          type: string
+          format: uuid
+        sessionId:
+          type: string
+          format: uuid
+        componentName:
+          type: string
+        componentCode:
+          type: string
+        typeDefinitions:
+          type: string
+        styleDefinition:
+          type: object
+        dataBinding:
+          type: object
+        dependencies:
+          type: array
+          items:
+            type: string
+        generationTime:
+          type: string
+          format: date-time
+        metadata:
+          $ref: '#/components/schemas/ComponentMetadata'
+
+    ComponentPackage:
+      type: object
+      properties:
+        component:
+          type: string
+          description: Main component file content
+        types:
+          type: string
+          description: TypeScript definitions
+        readme:
+          type: string
+          description: Usage instructions
+        packageJson:
+          type: string
+          description: Package.json with dependencies
+        example:
+          type: string
+          description: Usage example
+
+    VisualizationTemplates:
+      type: object
+      properties:
+        templates:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationTemplate'
+
+    VisualizationTemplate:
+      type: object
+      properties:
+        type:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        requirements:
+          $ref: '#/components/schemas/TemplateRequirements'
+        preview:
+          type: string
+          description: Base64 encoded preview image
+
+    TemplateRequirements:
+      type: object
+      properties:
+        minFields:
+          type: integer
+        maxFields:
+          type: integer
+        requiredFieldTypes:
+          type: array
+          items:
+            type: string
+        supportedDomains:
+          type: array
+          items:
+            type: string
+        complexityLimit:
+          type: string
+          enum: [low, medium, high]
+
+    ValidationRequest:
+      type: object
+      required:
+        - visualizationType
+        - analysisData
+      properties:
+        visualizationType:
+          type: string
+          enum: [bar-chart, line-chart, pie-chart, table, scatter-plot, heatmap, dashboard]
+        analysisData:
+          $ref: '#/components/schemas/AnalysisData'
+
+    ValidationResult:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        errors:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        suggestions:
+          type: array
+          items:
+            type: string
+        estimatedComplexity:
+          type: string
+          enum: [low, medium, high]
+
+    SessionArtifacts:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          format: uuid
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/VisualizationArtifact'
+        total:
+          type: integer
+        generatedAt:
+          type: string
+          format: date-time

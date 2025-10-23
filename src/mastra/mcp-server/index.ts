@@ -15,6 +15,10 @@ import { agentTools } from './tools/agents.js';
 import { workflowTools } from './tools/workflows.js';
 import { knowledgeBaseMCPTools } from './tools/knowledge.js';
 import { memoryMCPTools } from './tools/memory.js';
+import { biContextMCPTools } from './tools/context.js';
+
+// External integration imports
+import { externalMCPManager } from './external-integration.js';
 
 /**
  * MCP Server Configuration and Initialization
@@ -54,6 +58,8 @@ export interface MastraMCPServerConfig {
     enableWorkflows?: boolean;
     enableKnowledge?: boolean;
     enableMemory?: boolean;
+    enableBIContext?: boolean;
+    enableExternalIntegration?: boolean;
     customTools?: any[];
   };
 
@@ -132,6 +138,8 @@ export class MastraMCPServer extends EventEmitter {
         enableWorkflows: true,
         enableKnowledge: true,
         enableMemory: true,
+        enableBIContext: true,
+        enableExternalIntegration: true,
         customTools: [],
         ...config.tools,
       },
@@ -213,6 +221,19 @@ export class MastraMCPServer extends EventEmitter {
       // Update tool stats
       this.stats.tools.registered = allTools.length;
       this.stats.tools.byCategory = this.categorizeTools(allTools);
+
+      // Initialize external MCP servers if enabled
+      if (this.config.tools.enableExternalIntegration) {
+        try {
+          await externalMCPManager.initialize();
+          rootLogger.info('External MCP integration initialized');
+        } catch (error) {
+          rootLogger.warn('Failed to initialize external MCP integration', {
+            error: (error as Error).message,
+          });
+          // Continue without external integration
+        }
+      }
 
       // Initialize protocol handler
       const protocolOptions: MCPServerOptions = {
@@ -515,6 +536,18 @@ export class MastraMCPServer extends EventEmitter {
         this.protocolHandler = null;
       }
 
+      // Shutdown external MCP integration
+      if (this.config.tools.enableExternalIntegration) {
+        try {
+          await externalMCPManager.shutdown();
+          rootLogger.info('External MCP integration shutdown completed');
+        } catch (error) {
+          rootLogger.warn('Error during external MCP shutdown', {
+            error: (error as Error).message,
+          });
+        }
+      }
+
       // Complete tracing
       if (this.tracer) {
         this.tracer.end({
@@ -574,6 +607,11 @@ export class MastraMCPServer extends EventEmitter {
       rootLogger.debug('Added memory tools', { count: memoryMCPTools.length });
     }
 
+    if (this.config.tools.enableBIContext) {
+      tools.push(...biContextMCPTools);
+      rootLogger.debug('Added BI context tools', { count: biContextMCPTools.length });
+    }
+
     if (this.config.tools.customTools && this.config.tools.customTools.length > 0) {
       tools.push(...this.config.tools.customTools);
       rootLogger.debug('Added custom tools', { count: this.config.tools.customTools.length });
@@ -585,6 +623,8 @@ export class MastraMCPServer extends EventEmitter {
       workflows_enabled: this.config.tools.enableWorkflows,
       knowledge_enabled: this.config.tools.enableKnowledge,
       memory_enabled: this.config.tools.enableMemory,
+      bi_context_enabled: this.config.tools.enableBIContext,
+      external_integration_enabled: this.config.tools.enableExternalIntegration,
       custom_tools: this.config.tools.customTools?.length || 0,
     });
 
@@ -718,6 +758,8 @@ export const defaultMCPServerConfig: MastraMCPServerConfig = {
     enableWorkflows: true,
     enableKnowledge: true,
     enableMemory: true,
+    enableBIContext: true,
+    enableExternalIntegration: true,
     customTools: [],
   },
   options: {

@@ -37,7 +37,7 @@ services:
       - UNSTRUCTURED_MEMORY_FREE_MINIMUM_MB=2048
       - MAX_LIFETIME_SECONDS=86400
     volumes:
-      - ./data/unstructured-temp:/app/temp
+      - unstructured_data:/app/temp
     deploy:
       resources:
         limits:
@@ -167,6 +167,7 @@ services:
       - .:/app
       - /app/node_modules
       - ./data/uploads:/app/data/uploads
+      - ./mcp.json:/app/mcp.json
     networks:
       - mastra-network
       - supabase_default
@@ -175,6 +176,8 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  unstructured_data:
+
 
 networks:
   mastra-network:

@@ -25,5 +25,11 @@ export * from './observability.js';
 // Bedrock LLM service types
 export * from './bedrock.js';
 
+// Business Intelligence Context Enhancement types
+export * from './context.js';
+
+// Visualization and React component generation types
+export * from './visualization.js';
+
 // Re-export commonly used Zod for validation
 export { z } from 'zod';

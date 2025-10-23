@@ -28,9 +28,26 @@ import { rootLogger } from './observability/logger.js';
 import { getKnowledgeRoutes } from './api/routes/knowledge.js';
 import { getPlaygroundRoutes } from './api/routes/playground.js';
 import { getHealthRoutes } from './api/routes/health.js';
+import { getContextRoutes } from './api/routes/context.js';
 import { documentProcessingQueue } from './knowledge/processing-queue.js';
 import { mcpToolRegistry } from './mcp/registry.js';
 import { getMCPToolRegistrationManager } from './tools/mcp-registry.js';
+
+// Business Intelligence Context Enhancement imports
+import { biContextStore } from './memory/context-store.js';
+import { biSessionManager } from './memory/session-manager.js';
+import { biContextTracer } from './observability/context-tracer.js';
+import { externalMCPManager } from './mcp-server/external-integration.js';
+
+// Phase 6: Interactive Visualization Generation imports
+import { visualizationGenerationWorkflow } from './workflows/visualization-generation.js';
+// import { visualizationRoutes } from './api/routes/visualization.js'; // TODO: Fix Hono compatibility
+import { visualizationTools } from './tools/visualization-tools.js';
+import { astCodeGenerationTools } from './tools/ast-code-generation.js';
+import { visualizationTemplateTools } from './tools/visualization-templates.js';
+import { dataBindingGeneratorTools } from './tools/data-binding-generator.js';
+import { artifactManagementTools } from './tools/artifact-management.js';
+import { componentValidationTools } from './tools/component-validation.js';
 
 // Add global error handlers to prevent crashes
 process.on('uncaughtException', (error) => {
@@ -80,10 +97,98 @@ const observabilityConfig = env.LANGFUSE_PUBLIC_KEY && env.LANGFUSE_SECRET_KEY
       default: { enabled: true },
     };
 
+// Initialize Business Intelligence Context Infrastructure
+async function initializeBIContextInfrastructure() {
+  try {
+    rootLogger.info('🚀 INITIALIZING BUSINESS INTELLIGENCE CONTEXT INFRASTRUCTURE');
+
+    // Initialize external MCP manager first (Supabase and Tavily integrations)
+    rootLogger.info('🔧 Initializing external MCP integrations (Supabase, Tavily)');
+    await externalMCPManager.initialize();
+    rootLogger.info('✅ External MCP integrations initialized successfully');
+
+    // Perform health checks on BI infrastructure
+    rootLogger.info('🔍 Performing BI infrastructure health checks');
+
+    const [contextStoreHealth, sessionManagerStats] = await Promise.allSettled([
+      biContextStore.healthCheck(),
+      Promise.resolve(biSessionManager.getSessionStats()),
+    ]);
+
+    if (contextStoreHealth.status === 'fulfilled' && contextStoreHealth.value.healthy) {
+      rootLogger.info('✅ BI Context Store is healthy', {
+        tables: Object.keys(contextStoreHealth.value.tables).length,
+        functions: Object.keys(contextStoreHealth.value.functions).length,
+        vectorOps: contextStoreHealth.value.vectorOps,
+      });
+    } else {
+      rootLogger.warn('⚠️ BI Context Store health issues detected', {
+        issues: contextStoreHealth.status === 'fulfilled' ? contextStoreHealth.value.issues : ['Health check failed'],
+      });
+    }
+
+    if (sessionManagerStats.status === 'fulfilled') {
+      rootLogger.info('✅ BI Session Manager initialized', {
+        activeSessions: sessionManagerStats.value.active,
+        totalSessions: sessionManagerStats.value.total,
+        authenticated: sessionManagerStats.value.authenticated,
+        anonymous: sessionManagerStats.value.anonymous,
+      });
+    }
+
+    // Cleanup any orphaned traces
+    const cleanedTraces = await biContextTracer.cleanupOrphanedTraces();
+    if (cleanedTraces > 0) {
+      rootLogger.info('🧹 Cleaned up orphaned traces', { count: cleanedTraces });
+    }
+
+    // Get external MCP server status
+    const externalServers = externalMCPManager.getAllServerStatus();
+    rootLogger.info('✅ BI Context Infrastructure initialization completed', {
+      contextStore: contextStoreHealth.status === 'fulfilled' ? contextStoreHealth.value.healthy : false,
+      sessionManager: sessionManagerStats.status === 'fulfilled',
+      contextTracer: true,
+      externalServers: externalServers.length,
+      healthyExternalServers: externalServers.filter(s => s.healthy).length,
+    });
+
+    return {
+      contextStore: biContextStore,
+      sessionManager: biSessionManager,
+      contextTracer: biContextTracer,
+      externalMCPManager: externalMCPManager,
+      healthy: contextStoreHealth.status === 'fulfilled' ? contextStoreHealth.value.healthy : false,
+    };
+
+  } catch (error) {
+    rootLogger.error('❌ BI Context Infrastructure initialization failed', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+
+    // Return degraded infrastructure - some features may not work
+    return {
+      contextStore: biContextStore,
+      sessionManager: biSessionManager,
+      contextTracer: biContextTracer,
+      externalMCPManager: externalMCPManager,
+      healthy: false,
+      degraded: true,
+    };
+  }
+}
+
 // Initialize all tools BEFORE creating Mastra instance
 async function initializeAllTools() {
   try {
     rootLogger.info('🔥 STARTING TOOL INITIALIZATION BEFORE MASTRA CREATION');
+
+    // Initialize BI Context Infrastructure FIRST
+    const biInfrastructure = await initializeBIContextInfrastructure();
+    rootLogger.info('✅ BI Context Infrastructure ready', {
+      healthy: biInfrastructure.healthy,
+      degraded: biInfrastructure.degraded || false,
+    });
 
     // Initialize MCP registry first
     rootLogger.info('🔥 INITIALIZING MCP REGISTRY');
@@ -174,6 +279,7 @@ async function createMastraInstance() {
         [planningWorkflow.id]: planningWorkflow,
         [businessIntelligencePlannerWorkflow.id]: businessIntelligencePlannerWorkflow,
         [businessIntelligenceExecutorWorkflow.id]: businessIntelligenceExecutorWorkflow,
+        [visualizationGenerationWorkflow.name]: visualizationGenerationWorkflow,
       },
       // No 'tools' property - tools are configured at agent level
       storage: getPostgresStore(),
@@ -190,22 +296,29 @@ async function createMastraInstance() {
         middleware: [
           // Configure CORS to allow ALL origins, methods, and headers
           async (c, next) => {
-            // Set CORS headers to allow all origins, methods, and headers
-            c.res.headers.set('Access-Control-Allow-Origin', '*');
-            c.res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
-            c.res.headers.set('Access-Control-Allow-Headers', '*');
-            c.res.headers.set('Access-Control-Expose-Headers', '*');
-            c.res.headers.set('Access-Control-Allow-Credentials', 'true');
-            c.res.headers.set('Access-Control-Max-Age', '86400');
-            
-            // Handle preflight OPTIONS requests
+            // Handle preflight OPTIONS requests first
             if (c.req.method === 'OPTIONS') {
               return new Response(null, {
                 status: 200,
-                headers: c.res.headers,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD',
+                  'Access-Control-Allow-Headers': '*',
+                  'Access-Control-Expose-Headers': '*',
+                  'Access-Control-Allow-Credentials': 'true',
+                  'Access-Control-Max-Age': '86400',
+                },
               });
             }
-            
+
+            // Set CORS headers for all other requests
+            c.header('Access-Control-Allow-Origin', '*');
+            c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD');
+            c.header('Access-Control-Allow-Headers', '*');
+            c.header('Access-Control-Expose-Headers', '*');
+            c.header('Access-Control-Allow-Credentials', 'true');
+            c.header('Access-Control-Max-Age', '86400');
+
             // Continue to next middleware
             await next();
           },
@@ -214,6 +327,9 @@ async function createMastraInstance() {
           ...getHealthRoutes(),
           ...getKnowledgeRoutes(),
           ...getPlaygroundRoutes(),
+          ...getContextRoutes(),
+          // TODO: Fix visualization routes to use registerApiRoute format
+          // visualizationRoutes,
         ],
       },
     });
@@ -344,5 +460,62 @@ export { executeDefaultOrchestration, executeBusinessIntelligenceOrchestration, 
 export { executeBusinessIntelligencePlanner, executeBusinessIntelligenceExecutor };
 export { ensureMcpToolsLoaded, getSharedToolMap, getBedrockTools, getToolCounts, getAllAvailableTools };
 
+// Visualization tool exports
+export {
+  visualizationTools,
+  visualizationToolsMetadata,
+} from './tools/visualization-tools.js';
+
+export {
+  astCodeGenerationTools,
+  astCodeGenerationToolsMetadata,
+} from './tools/ast-code-generation.js';
+
+export {
+  visualizationTemplateTools,
+  visualizationTemplateToolsMetadata,
+} from './tools/visualization-templates.js';
+
+export {
+  dataBindingGeneratorTools,
+  dataBindingGeneratorToolsMetadata,
+} from './tools/data-binding-generator.js';
+
+export {
+  artifactManagementTools,
+  artifactManagementToolsMetadata,
+} from './tools/artifact-management.js';
+
+export {
+  componentValidationTools,
+  componentValidationToolsMetadata,
+} from './tools/component-validation.js';
+
 // MCP exports for external access
 export { mcpToolRegistry, getMCPToolRegistrationManager };
+
+// Business Intelligence Context Enhancement exports
+export {
+  biContextStore,
+  biSessionManager,
+  biContextTracer,
+  externalMCPManager,
+};
+
+// BI Context helper functions for agents and workflows
+export {
+  createContextStoreOptions,
+  isContextExpired,
+  calculateSessionDuration,
+} from './memory/context-store.js';
+
+export {
+  createBIWorkflowTracer,
+  createBIAgentTracer,
+} from './observability/context-tracer.js';
+
+export {
+  getSupabaseMCPConnection,
+  getTavilyMCPConnection,
+  createContextMetadata,
+} from './mcp-server/external-integration.js';

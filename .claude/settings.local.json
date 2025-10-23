@@ -44,7 +44,10 @@
       "Bash(curl -X GET http://localhost:4111/ -s)",
       "Bash(curl:*)",
       "Bash(sudo certbot renew --cert-name mastra.brius.com)",
-      "Bash(sudo systemctl stop nginx)"
+      "Bash(sudo systemctl stop nginx)",
+      "WebFetch(domain:ui.shadcn.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.npmjs.com)"
     ],
     "deny": [],
     "ask": []
